@@ -77,3 +77,20 @@ Everything for **AI BenchMate** (code, plans, architecture notes, and prompt/res
 
 1. Open `portable/index.html` (or run `npm.cmd run dev` for the React + Vite edition) and optionally test against a real benchmark folder on DGX Spark or Radeon AI Pro R9700.
 2. When transferring to another PC, either copy-paste `C:\Users\GadgetPilipinas\Documents\AI BenchMate` or `git clone` either GitHub repository.
+
+## Latest Update (2026-11-14) — Uncluttered 3-Tab Card Layout & Tested-Models-Only Cleanup
+
+- **Clean 3-Tab Structure (`Benchmarks`, `Results & Audit`, `SSH & Setup`):**
+  - Replaced the fragmented 5-tab split so hardware selection, model picking/adding, and all 7 separate benchmark suites live on the single `Benchmarks` tab without extra tab switches.
+  - **`Benchmarks` Tab:** Compact top toolbar (`Platform`, conditional AMD `Vulkan`/`ROCm HIP`, `VRAM`, `Qwen3.8-27B` / `Qwen3.6-35B-A3B` chips + user custom models with `×`, collapsible `Paths & Naming` drawer, and `.gguf` input + `+ Add Model`), conditional Guardrails banners, 7 separate suite cards (`01 llama-bench` .. `06B AIPerf 64k Sweep`) with individual Terminal 1 (Server) & Terminal 2 (Client) boxes and collapsed-by-default `Parameters ▾` drawers, plus bottom All-in-One Playbook export.
+  - **`Results & Audit` Tab:** Folder Auditor (browse/drop folder or files + deep audit script + 7-row status table) and Comparison Matrix (`Load Sample (DGX vs R9700)`, `.md`/`.json` upload, toggleable SVG charts, `.md`/`.csv` export).
+  - **`SSH & Setup` Tab:** SSH parameters and separate copy-ready terminal cards (`Windows PowerShell SSH Trigger`, `tmux Split Session`, `scp Pull`, `DGX VRAM Sweep`, `Restore start-ai`, and platform setup cards).
+- **Models & Clutter Removed:**
+  - Trimmed `QUICK_MODELS` to only the 2 benchmarked models (`Qwen3.8-27B` and `Qwen3.6-35B-A3B`); future models and parameter presets remain addable dynamically via `.gguf` + `+ Add Model` and `+ Save Preset`.
+  - Removed overlapping suite checkboxes (commands never combine across suites), verbose paragraph blurbs, excess category/duration badges, `Mark Step Complete` buttons, `Filter: Missing Runs Only`, and niche checkboxes.
+- **Last Verified State:**
+  - `node --check` on `portable/js/benchmate-data.js`, `benchmate-engine.js`, `benchmate-ui.js`: exit 0
+  - Node `vm` + ESM 3-tab UI & 2-model check (`VERIFIED_UI_AND_DATA_CHECKS_PASSED`): exit 0
+  - `node "C:\Program Files\nodejs\node_modules\npm\bin\npm-cli.js" run build` (`vite build`, 32 modules, 467ms): exit 0
+  - `node scripts\verify-benchmate.mjs`: `ALL AI BENCHMATE VERIFICATION CHECKS PASSED (9/9)`
+

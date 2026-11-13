@@ -138,3 +138,27 @@ This file records the chronological conversation prompts, technical decisions, a
   - Built the **Models** fit table with Tier/KV controls + clickable model selection and custom `.gguf` input.
   - Built the **Run** tab with the left-bordered Outstanding callout rows, inline suite checkboxes (`agentperf`, `aiperf`, `aiperf-64k`, `llama-bench`, `llama-benchy`, `llmperf`, `speed-bench`), collapsible `Customize parameters` drawer, guardrail banners, and a single dark terminal command preview box.
   - Streamlined **Results** (audit table + toggleable charts/exports) and **Remote & Setup** (pill switcher + single terminal box).
+
+---
+
+### Entry 10 — Uncluttered 3-Tab Unified Benchmark Cards & Tested-Models-Only Cleanup (2026-11-14)
+- **User Prompt Summary:**
+  - Rejected the 5-tab split (`System`, `Models`, `Run`, `Results`, `Remote & Setup`) because switching tabs added extra clicks, suite checkboxes combined commands across benchmarks, UI text/checkboxes were still too verbose, and unnecessary predetermined models/presets were present. Requested keeping only the tested models from `DGX Spark vs Radeon AI Pro 9700 — AI Benchmarks & Inference.md` while retaining the ability for users to add custom models/presets later.
+- **Design & Implementation Changes (Synced 1:1 Across `portable/` and Root React+Vite `src/`):**
+  - **Clean 3-Tab Navigation (`Benchmarks`, `Results & Audit`, `SSH & Setup`):**
+    - Updated default `ui.activeTab` to `"benchmarks"` (`ui.showPathsAndNaming: false`) with automatic legacy migration in `loadState()` (`builder`/`run`/`models`/`system` -> `"benchmarks"`, `coverage` -> `"results"`, `ssh`/`remote`/`setup` -> `"ssh"`).
+    - **`Benchmarks` Tab:** Unified single-screen workflow with compact Platform/Backend/VRAM/Model bar, collapsible `Paths & Naming` drawer (with user `+ Save Preset` and `Reset Parity Defaults`), `.gguf` path input + `+ Add Model`, conditional guardrail banners, and 7 independent suite cards (`01 llama-bench` .. `06B AIPerf 64k Sweep`) each rendering separate Terminal 1 (Server) + Terminal 2 (Client) boxes and collapsed `Parameters ▾` drawers—never combined via checkboxes—plus bottom Full Playbook copy/download footer.
+    - **`Results & Audit` Tab & `SSH & Setup` Tab:** Clean layout without verbose card blurbs, niche toggles, or extra navigation clicks.
+  - **Only the 2 Tested Models in `QUICK_MODELS`:** Trimmed `QUICK_MODELS` in both `src/core/benchmate-data.js` and `portable/js/benchmate-data.js` exclusively to `Qwen3.8-27B` (`qwen38_27b`) and `Qwen3.6-35B-A3B` (`qwen36_35b_moe`), removing all other predetermined models.
+- **Files Modified:**
+  - `src/core/benchmate-data.js`, `portable/js/benchmate-data.js`
+  - `src/core/benchmate-engine.js`, `portable/js/benchmate-engine.js`
+  - `src/styles.css`, `portable/css/styles.css`
+  - `portable/js/benchmate-ui.js`, `src/App.jsx`
+  - `docs/HANDOFF.md`, `docs/PROMPT_HISTORY.md`
+- **Verification Results:**
+  - `node --check` on `portable/js/benchmate-data.js`, `benchmate-engine.js`, `benchmate-ui.js`: exit 0
+  - Node `vm` + ESM verification (`VERIFIED_UI_AND_DATA_CHECKS_PASSED`): verified 2 models only, `activeTab: "benchmarks"`, legacy tab mapping, 7 separate suite cards without suite checkboxes, 3 tabs rendering, and `+ Add Model` custom chip persistence.
+  - Vite production build (`npm-cli.js run build`): 32 modules transformed in 467ms.
+  - Parity & regression suite (`node scripts\verify-benchmate.mjs`): `ALL AI BENCHMATE VERIFICATION CHECKS PASSED (9/9)`.
+

@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useState } from "react";
 import {
   HARDWARE_PROFILES,
   PARITY_DEFAULTS,
@@ -7,17 +7,19 @@ import {
   SUITE_METADATA
 } from "./core/benchmate-data.js";
 import {
+  STORAGE_KEY,
   auditFileList,
+  buildAllInOnePlaybook,
   buildDeepAuditScript,
-  buildSelectedSuitesPreview,
+  buildServerCommand,
   buildSetupCards,
   buildSshCommands,
-  computeModelFitRows,
+  buildSuiteClientCommand,
   evaluateGuardrails,
   exportComparisonCsv,
   exportComparisonMarkdown,
   getOutputTarget,
-  joinPath,
+  isSuiteCustomized,
   loadSnapshotIDB,
   loadState,
   parseModelPath,
@@ -26,119 +28,131 @@ import {
   saveState
 } from "./core/benchmate-engine.js";
 
-const KEYWORDS = new Set([
-  "llama-bench", "llama-server", ".\\llama-bench.exe", ".\\llama-server.exe",
-  "python", "python3", "aiperf", "agentperf-local", "tmux", "ssh", "scp",
-  "sudo", "pip", "git", "source", "export", "mkdir", "rm", "pkill", "fuser",
-  "nvidia-smi", "amd-smi", "Set-Location", "New-Item", "Remove-Item",
-  "Stop-Process", "Set-ExecutionPolicy", "Tee-Object"
-]);
-
-function renderHighlightedLine(line, idx) {
+function renderHighlightedLine(line, lineIdx) {
   const trimmed = line.trim();
   if (trimmed.startsWith("#")) {
     return (
-      <div key={idx}>
-        <span className="tok-comment">{line}</span>
-      </div>
+      <span key={lineIdx} className="tok-comment">
+        {line}
+      </span>
     );
   }
-  const tokenRe = /("[^"]*"|'[^']*'|`[^`]*`|\s--?[a-zA-Z0-9_-]+|^--?[a-zA-Z0-9_-]+|\S+)/g;
-  const parts = [];
-  let lastIndex = 0;
-  let match;
-  let k = 0;
-  while ((match = tokenRe.exec(line)) !== null) {
-    if (match.index > lastIndex) parts.push(line.slice(lastIndex, match.index));
-    const raw = match[0];
-    const clean = raw.trim();
-    if ((clean.startsWith('"') && clean.endsWith('"')) || (clean.startsWith("'") && clean.endsWith("'"))) {
-      parts.push(<span key={k++} className="tok-str">{raw}</span>);
-    } else if (clean.startsWith("-")) {
-      parts.push(<span key={k++} className="tok-flag">{raw}</span>);
-    } else if (KEYWORDS.has(clean)) {
-      parts.push(<span key={k++} className="tok-kw">{raw}</span>);
+  const tokens = line.split(/(\s+|--?[A-Za-z0-9_-]+|"[^"]*"|'[^']*')/g).filter(Boolean);
+  return (
+    <React.Fragment key={lineIdx}>
+      {tokens.map((tok, i) => {
+        if (/^--?[A-Za-z0-9_-]+$/.test(tok)) {
+          return (
+            <span key={i} className="tok-flag">
+              {tok}
+            </span>
+          );
+        }
+        if (/^(["']).*\1$/.test(tok)) {
+          return (
+            <span key={i} className="tok-str">
+              {tok}
+            </span>
+          );
+        }
+        if (/^(cd|mkdir|source|export|python3?|pip|git|ssh|scp|tmux|aiperf|speed-bench|llama-benchy|pkill|fuser|nvidia-smi|amd-smi|New-Item|Stop-Process|Set-Location|Remove-Item)$/.test(tok)) {
+          return (
+            <span key={i} className="tok-kw">
+              {tok}
+            </span>
+          );
+        }
+        return <React.Fragment key={i}>{tok}</React.Fragment>;
+      })}
+    </React.Fragment>
+  );
+}
+
+function HighlightedPre({ code }) {
+  const lines = String(code || "").split("\n");
+  return (
+    <pre className="sb-terminal-pre">
+      {lines.map((line, idx) => (
+        <React.Fragment key={idx}>
+          {renderHighlightedLine(line, idx)}
+          {idx < lines.length - 1 ? "\n" : ""}
+        </React.Fragment>
+      ))}
+    </pre>
+  );
+}
+
+function downloadText(filename, content) {
+  const blob = new Blob([content], { type: "text/plain;charset=utf-8" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
+function readDroppedEntry(entry, list) {
+  return new Promise((resolve) => {
+    if (entry.isFile) {
+      entry.file(
+        (file) => {
+          list.push({
+            name: file.name,
+            path: entry.fullPath ? entry.fullPath.replace(/^\//, "") : file.name,
+            size: file.size,
+            textLoader: () => file.text()
+          });
+          resolve();
+        },
+        () => resolve()
+      );
+    } else if (entry.isDirectory) {
+      const reader = entry.createReader();
+      const readAll = () => {
+        reader.readEntries(
+          async (entries) => {
+            if (!entries.length) return resolve();
+            for (const sub of entries) await readDroppedEntry(sub, list);
+            readAll();
+          },
+          () => resolve()
+        );
+      };
+      readAll();
     } else {
-      parts.push(raw);
+      resolve();
     }
-    lastIndex = tokenRe.lastIndex;
-  }
-  if (lastIndex < line.length) parts.push(line.slice(lastIndex));
-  return <div key={idx}>{parts.length ? parts : " "}</div>;
+  });
 }
 
-function CopyButton({ text, label = "Copy", className = "btn", onClickExtra }) {
-  const [copied, setCopied] = useState(false);
+function SvgBarCard({ title, rows, unit }) {
+  const valid = rows.filter((r) => r.value > 0);
+  if (!valid.length) return null;
+  const maxVal = Math.max(...valid.map((r) => r.value), 1);
+  const barH = 22;
+  const gap = 8;
+  const svgH = valid.length * (barH + gap) + 12;
 
-  const onCopy = async () => {
-    if (onClickExtra) onClickExtra();
-    try {
-      await navigator.clipboard.writeText(text);
-    } catch {
-      const ta = document.createElement("textarea");
-      ta.value = text;
-      ta.style.position = "fixed";
-      ta.style.opacity = "0";
-      document.body.appendChild(ta);
-      ta.select();
-      try { document.execCommand("copy"); } catch {}
-      document.body.removeChild(ta);
-    }
-    setCopied(true);
-    setTimeout(() => setCopied(false), 1400);
-  };
-
-  return (
-    <button type="button" className={`${className} ${copied ? "copied" : ""}`} onClick={onCopy}>
-      {copied ? "Copied!" : label}
-    </button>
-  );
-}
-
-function TerminalBox({ titleLeft, code }) {
-  const lines = useMemo(() => String(code || "").split("\n"), [code]);
-  return (
-    <div className="sb-terminal-wrap">
-      <div className="sb-terminal-bar">
-        <span>{titleLeft}</span>
-        <CopyButton text={code} label="Copy" className="btn btn-sm btn-outline" />
-      </div>
-      <pre className="sb-terminal-pre">{lines.map((l, i) => renderHighlightedLine(l, i))}</pre>
-    </div>
-  );
-}
-
-function SvgBarChart({ title, subtitle, items, unit }) {
-  if (!items.length) {
-    return (
-      <div className="sb-chart-card">
-        <h4 style={{ margin: 0 }}>{title}</h4>
-        <div className="small muted">{subtitle}</div>
-        <div className="small muted">No matching parsed files loaded yet.</div>
-      </div>
-    );
-  }
-  const maxVal = Math.max(...items.map((i) => i.value), 1);
-  const rowH = 30;
-  const svgH = items.length * rowH + 20;
   return (
     <div className="sb-chart-card">
-      <h4 style={{ margin: 0, fontSize: "13.5px" }}>{title}</h4>
-      <div className="small muted">{subtitle}</div>
-      <svg className="sb-chart-svg" viewBox={`0 0 560 ${svgH}`}>
-        {items.map((item, idx) => {
-          const y = idx * rowH + 10;
-          const barW = Math.max(4, Math.round((item.value / maxVal) * 280));
-          const color = item.color || "var(--accent)";
+      <div style={{ fontSize: "12.5px", fontWeight: 700 }}>{title}</div>
+      <svg className="sb-chart-svg" viewBox={`0 0 490 ${svgH}`} aria-label={title}>
+        {valid.map((r, i) => {
+          const y = 6 + i * (barH + gap);
+          const pct = Math.max(4, Math.round((r.value / maxVal) * 230));
+          const fill = r.gpuLabel.includes("DGX") ? "#10b981" : "#1b5698";
           return (
-            <g key={idx}>
-              <text x="4" y={y + 13} fill="var(--text-secondary)" fontSize="11" fontFamily="var(--font-mono)">
-                {item.label.slice(0, 26)}
+            <g key={i}>
+              <text x="0" y={y + 15} fill="currentColor" fontSize="11">
+                {r.label}
               </text>
-              <rect x="205" y={y + 2} width="280" height="14" rx="4" fill="var(--chart-grid)" />
-              <rect x="205" y={y + 2} width={barW} height="14" rx="4" fill={color} />
-              <text x={213 + barW} y={y + 13} fill="var(--text-primary)" fontSize="11" fontWeight="700" fontFamily="var(--font-mono)">
-                {item.value} {unit}
+              <rect x="195" y={y + 2} width={pct} height="16" rx="4" fill={fill} opacity="0.88" />
+              <text x={202 + pct} y={y + 14} fill="currentColor" fontSize="11" fontWeight="600">
+                {r.value}
+                {unit}
               </text>
             </g>
           );
@@ -148,289 +162,416 @@ function SvgBarChart({ title, subtitle, items, unit }) {
   );
 }
 
-function downloadFile(filename, content, mime = "text/plain;charset=utf-8") {
-  const blob = new Blob([content], { type: mime });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement("a");
-  a.href = url;
-  a.download = filename;
-  document.body.appendChild(a);
-  a.click();
-  document.body.removeChild(a);
-  setTimeout(() => URL.revokeObjectURL(url), 500);
-}
-
 export default function App() {
   const [state, setState] = useState(() => loadState());
-  const [, setRefreshTick] = useState(0);
-  const [dragOverAudit, setDragOverAudit] = useState(false);
+  const [presetDraft, setPresetDraft] = useState("");
+  const [copiedKey, setCopiedKey] = useState(null);
+  const [dragOver, setDragOver] = useState(false);
+
+  const updateState = (updater) => {
+    setState((prev) => {
+      const next = typeof updater === "function" ? updater(prev) : updater;
+      saveState(next);
+      try {
+        saveSnapshotIDB("latest_state", next);
+      } catch {
+        /* ignore */
+      }
+      return next;
+    });
+  };
 
   useEffect(() => {
-    saveState(state);
-  }, [state]);
-
-  useEffect(() => {
-    (async () => {
-      const [savedAudit, savedResults] = await Promise.all([
-        loadSnapshotIDB("latest_audit"),
-        loadSnapshotIDB("latest_results")
-      ]);
-      setState((prev) => {
-        let next = prev;
-        if (savedAudit?.items && Object.keys(prev.audit?.items || {}).length === 0) {
-          next = { ...next, audit: savedAudit };
-        }
-        if (Array.isArray(savedResults) && savedResults.length && !(prev.results?.loadedRecords || []).length) {
-          next = { ...next, results: { ...next.results, loadedRecords: savedResults } };
-        }
-        return next;
-      });
-    })();
-  }, []);
-
-  useEffect(() => {
-    const html = document.documentElement;
     let resolved = state.ui.theme || "light";
     if (resolved === "system") {
-      resolved = window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+      try {
+        resolved =
+          window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches
+            ? "dark"
+            : "light";
+      } catch {
+        resolved = "light";
+      }
     }
-    html.setAttribute("data-theme", resolved);
-    html.setAttribute("data-light-terminal", state.ui.lightTerminal ? "true" : "false");
-    html.classList.toggle("pause-animations", Boolean(state.ui.pauseAnimations));
-  }, [state.ui.theme, state.ui.lightTerminal, state.ui.pauseAnimations]);
+    document.documentElement.setAttribute("data-theme", resolved);
+    document.body.classList.toggle("pause-animations", Boolean(state.ui.pauseAnimations));
+  }, [state.ui.theme, state.ui.pauseAnimations]);
+
+  useEffect(() => {
+    try {
+      loadSnapshotIDB("latest_state").then((snap) => {
+        if (snap && snap.schemaVersion && !localStorage.getItem(STORAGE_KEY)) {
+          setState(loadState());
+        }
+      });
+    } catch {
+      /* ignore */
+    }
+  }, []);
+
+  const copyCommand = (text, key) => {
+    const val = String(text || "");
+    const markCopied = () => {
+      setCopiedKey(key);
+      setTimeout(() => setCopiedKey((cur) => (cur === key ? null : cur)), 1300);
+    };
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(val).then(markCopied).catch(markCopied);
+    } else {
+      markCopied();
+    }
+  };
 
   const profile = HARDWARE_PROFILES[state.hardware.profileId];
-  const vramGb = Number(state.hardware.vramGb) || profile.defaultVramGb;
-  const budgetGib = (vramGb * 0.9).toFixed(1);
-  const poolType = profile.os === "linux" ? "unified" : "discrete";
+  const tab = state.ui.activeTab || "benchmarks";
+  const allModels = [...QUICK_MODELS, ...(state.customModels || [])];
 
-  const guardrails = useMemo(() => evaluateGuardrails(state), [state]);
-  const fitRows = useMemo(() => computeModelFitRows(state), [state]);
-  const runPreviewCode = useMemo(() => buildSelectedSuitesPreview(state), [state]);
-
-  const updateUi = (patch) => setState((prev) => ({ ...prev, ui: { ...prev.ui, ...patch } }));
-  const updateHardware = (patch) => setState((prev) => ({ ...prev, hardware: { ...prev.hardware, ...patch } }));
-  const updateModel = (patch) => setState((prev) => ({ ...prev, model: { ...prev.model, ...patch } }));
-  const updateSuiteField = (suiteId, field, value) =>
-    setState((prev) => ({
-      ...prev,
-      suites: { ...prev.suites, [suiteId]: { ...prev.suites[suiteId], [field]: value } }
-    }));
-
-  const switchHardwareProfile = (newProfileId) => {
-    const nextP = HARDWARE_PROFILES[newProfileId];
-    if (!nextP) return;
-    setState((prev) => {
-      const prevP = HARDWARE_PROFILES[prev.hardware.profileId];
-      const sep = nextP.os === "windows" ? "\\" : "/";
-      const matchQuick = QUICK_MODELS.find((m) => m.alias === prev.model.alias);
-      let nextFullPath = prev.model.fullPath;
-      if (matchQuick) {
-        const rel = nextP.os === "windows" ? matchQuick.relativeWin : matchQuick.relativeLinux;
-        nextFullPath = joinPath(nextP.defaultModelsDir, rel, sep);
-      } else if (prevP.os !== nextP.os) {
-        const fileOnly = (prev.model.filename || "model.gguf").split(/[\\/]+/).pop();
-        nextFullPath = joinPath(nextP.defaultModelsDir, fileOnly, sep);
-      }
-      const parsed = parseModelPath(nextFullPath);
+  const handleSelectModel = (modelObj) => {
+    updateState((prev) => {
+      const p = HARDWARE_PROFILES[prev.hardware.profileId];
+      const isWin = p.os === "windows";
+      const sep = isWin ? "\\" : "/";
+      const cleanBase = String(prev.model.baseDir || p.defaultModelsDir).replace(/[\\/]+$/, "");
+      const rel = isWin
+        ? modelObj.relativeWin || modelObj.filename || modelObj.relativeLinux
+        : modelObj.relativeLinux || modelObj.filename || modelObj.relativeWin;
+      const cleanRel = String(rel || "").replace(/^[\\/]+/, "");
+      const fullPath = modelObj.fullPath ? modelObj.fullPath : cleanBase + sep + cleanRel;
       return {
         ...prev,
-        hardware: {
-          ...prev.hardware,
-          profileId: nextP.id,
-          vramGb: nextP.defaultVramGb,
-          binDir: nextP.defaultBinDir,
-          repoDir: nextP.defaultRepoDir,
-          benchRoot: nextP.defaultBenchRoot,
-          resultsDir: nextP.defaultResultsDir,
-          nvidiaDevice: nextP.deviceFlag || prev.hardware.nvidiaDevice
-        },
         model: {
           ...prev.model,
-          fullPath: nextFullPath,
-          baseDir: parsed.baseDir,
-          filename: parsed.filename
+          fullPath,
+          baseDir: cleanBase,
+          filename: cleanRel.split(/[\\/]/).pop() || cleanRel,
+          alias: modelObj.alias,
+          slug: modelObj.slug,
+          tokenizer: modelObj.tokenizer,
+          weightGb: Number(modelObj.weightGb) || 15.8,
+          paramsB: Number(modelObj.paramsB) || 27
         }
       };
     });
   };
 
-  const selectQuickModel = (qm) => {
-    const sep = profile.os === "windows" ? "\\" : "/";
-    const rel = profile.os === "windows" ? qm.relativeWin : qm.relativeLinux;
-    updateModel({
-      fullPath: joinPath(profile.defaultModelsDir, rel, sep),
-      baseDir: profile.defaultModelsDir,
-      filename: rel,
-      alias: qm.alias,
-      slug: qm.slug,
-      tokenizer: qm.tokenizer,
-      weightGb: qm.weightGb,
-      paramsB: qm.paramsB
+  const handleChangeProfile = (newProfileId) => {
+    updateState((prev) => {
+      const prevProfile = HARDWARE_PROFILES[prev.hardware.profileId];
+      const nextProfile = HARDWARE_PROFILES[newProfileId];
+      if (!nextProfile) return prev;
+      const sep = nextProfile.os === "windows" ? "\\" : "/";
+      const matched = allModels.find(
+        (m) => m.slug === prev.model.slug || m.alias === prev.model.alias
+      );
+      let nextModel = { ...prev.model, baseDir: nextProfile.defaultModelsDir };
+      if (matched && matched.relativeWin && matched.relativeLinux) {
+        const rel = nextProfile.os === "windows" ? matched.relativeWin : matched.relativeLinux;
+        nextModel.fullPath = nextProfile.defaultModelsDir + sep + rel;
+        nextModel.filename = rel.split(/[\\/]/).pop() || rel;
+        nextModel.alias = matched.alias;
+        nextModel.slug = matched.slug;
+        nextModel.tokenizer = matched.tokenizer;
+        nextModel.weightGb = matched.weightGb;
+        nextModel.paramsB = matched.paramsB;
+      } else if (prevProfile.os !== nextProfile.os) {
+        const fileOnly = String(prev.model.fullPath || prev.model.filename || "").split(/[\\/]/).pop();
+        nextModel.fullPath = nextProfile.defaultModelsDir + sep + fileOnly;
+        nextModel.filename = fileOnly;
+      }
+      return {
+        ...prev,
+        hardware: {
+          ...prev.hardware,
+          profileId: newProfileId,
+          vramGb: nextProfile.defaultVramGb,
+          binDir: nextProfile.defaultBinDir,
+          repoDir: nextProfile.defaultRepoDir,
+          benchRoot: nextProfile.defaultBenchRoot,
+          resultsDir: nextProfile.defaultResultsDir,
+          nvidiaDevice: nextProfile.deviceFlag || "CUDA0"
+        },
+        model: nextModel
+      };
     });
   };
 
-  const selectModelById = (modelId) => {
-    const quick = QUICK_MODELS.find((m) => m.id === modelId);
-    if (quick) {
-      selectQuickModel(quick);
-      return;
-    }
-    if (modelId.startsWith("custom_")) {
-      const idx = parseInt(modelId.replace("custom_", ""), 10);
-      const cm = (state.customModels || [])[idx];
-      if (cm) updateModel(cm);
-    }
-  };
-
-  const applyGuardrailFix = (fixId) => {
-    setState((prev) => {
-      if (fixId === "ctx_aiperf_sweep") {
-        return { ...prev, suites: { ...prev.suites, aiperf_sweep: { ...prev.suites.aiperf_sweep, c: 70000, ctk: "q8_0", ctv: "q8_0" } } };
-      }
-      if (fixId === "ctx_benchy") {
-        return { ...prev, suites: { ...prev.suites, llama_benchy: { ...prev.suites.llama_benchy, c: 70000 } } };
-      }
-      if (fixId === "vram_overflow") {
-        const nextKv = guardrails.vramEstimate.kvPrecision === "fp16" ? "q8_0" : "q4_0";
-        const nextSuites = { ...prev.suites };
-        ["llama_benchy", "llmperf", "speed_bench", "agentperf", "aiperf_std", "aiperf_sweep"].forEach((sid) => {
-          nextSuites[sid] = { ...nextSuites[sid], ctk: nextKv, ctv: nextKv };
+  const handleAutoFix = (warningId) => {
+    updateState((prev) => {
+      const suites = JSON.parse(JSON.stringify(prev.suites));
+      if (warningId === "ctx_aiperf_sweep") {
+        suites.aiperf_sweep.c = 70000;
+        suites.aiperf_sweep.ctk = "q8_0";
+        suites.aiperf_sweep.ctv = "q8_0";
+      } else if (warningId === "ctx_benchy") {
+        suites.llama_benchy.c = 70000;
+      } else if (warningId === "vram_overflow") {
+        const targetKv = suites.aiperf_sweep.ctk === "fp16" ? "q8_0" : "q4_0";
+        Object.keys(suites).forEach((k) => {
+          if ("ctk" in suites[k]) suites[k].ctk = targetKv;
+          if ("ctv" in suites[k]) suites[k].ctv = targetKv;
         });
-        return { ...prev, suites: nextSuites };
       }
-      return prev;
+      return { ...prev, suites };
     });
   };
 
-  const runAuditEntries = async (entries, folderName) => {
+  const updateSuiteField = (suiteId, field, value) => {
+    updateState((prev) => {
+      const nextSuite = { ...prev.suites[suiteId], [field]: value };
+      if (suiteId === "speed_bench" && field === "contextPreset") {
+        nextSuite.c = Number(value) || 32768;
+      }
+      return { ...prev, suites: { ...prev.suites, [suiteId]: nextSuite } };
+    });
+  };
+
+  const renderSuiteFieldInput = (suiteId, field, label, type, val) => (
+    <div className="sb-field" key={field}>
+      <label>{label}</label>
+      <input
+        type={type}
+        className="sb-input"
+        value={val}
+        onChange={(e) => updateSuiteField(suiteId, field, type === "number" ? Number(e.target.value) || 0 : e.target.value)}
+      />
+    </div>
+  );
+
+  const renderSuiteFieldSelect = (suiteId, field, label, val, options) => (
+    <div className="sb-field" key={field}>
+      <label>{label}</label>
+      <select className="sb-select" value={val} onChange={(e) => updateSuiteField(suiteId, field, e.target.value)}>
+        {options.map((o) => {
+          const v = typeof o === "object" ? o.value : o;
+          const t = typeof o === "object" ? o.label : o;
+          return (
+            <option key={v} value={v}>
+              {t}
+            </option>
+          );
+        })}
+      </select>
+    </div>
+  );
+
+  const renderSuiteFieldCheck = (suiteId, field, label, checked) => (
+    <div className="sb-field" key={field}>
+      <label>{label}</label>
+      <label className="sb-field-inline" style={{ height: "32px" }}>
+        <input type="checkbox" checked={Boolean(checked)} onChange={(e) => updateSuiteField(suiteId, field, e.target.checked)} />
+        <span>{checked ? "Enabled" : "Disabled"}</span>
+      </label>
+    </div>
+  );
+
+  const renderSuiteDrawerFields = (suiteId) => {
+    const s = state.suites[suiteId];
+    const kvOpts = ["fp16", "q8_0", "q4_0"];
+    const faOpts = ["1", "on", "0", "off", "auto"];
+
+    if (suiteId === "llama_bench") {
+      return (
+        <>
+          {renderSuiteFieldInput(suiteId, "ngl", "-ngl", "number", s.ngl)}
+          {renderSuiteFieldSelect(suiteId, "fa", "-fa", s.fa, faOpts)}
+          {renderSuiteFieldInput(suiteId, "p", "-p (Prompt Sizes)", "text", s.p)}
+          {renderSuiteFieldInput(suiteId, "n", "-n (Gen Tokens)", "text", s.n)}
+          {renderSuiteFieldInput(suiteId, "r", "-r (Repetitions)", "number", s.r)}
+          {renderSuiteFieldInput(suiteId, "b", "-b (Batch)", "number", s.b)}
+          {renderSuiteFieldInput(suiteId, "ub", "-ub (uBatch)", "number", s.ub)}
+          {renderSuiteFieldSelect(suiteId, "format", "-o Format", s.format, ["md", "json", "csv"])}
+        </>
+      );
+    }
+    if (suiteId === "llama_benchy") {
+      return (
+        <>
+          {renderSuiteFieldInput(suiteId, "c", "Server -c", "number", s.c)}
+          {renderSuiteFieldInput(suiteId, "np", "Server -np", "number", s.np)}
+          {renderSuiteFieldSelect(suiteId, "ctk", "-ctk", s.ctk, kvOpts)}
+          {renderSuiteFieldSelect(suiteId, "ctv", "-ctv", s.ctv, kvOpts)}
+          {renderSuiteFieldSelect(suiteId, "fa", "-fa", s.fa, faOpts)}
+          {renderSuiteFieldInput(suiteId, "pp", "--pp", "text", s.pp)}
+          {renderSuiteFieldInput(suiteId, "tg", "--tg", "text", s.tg)}
+          {renderSuiteFieldInput(suiteId, "depth", "--depth", "text", s.depth)}
+          {renderSuiteFieldInput(suiteId, "runs", "--runs", "number", s.runs)}
+        </>
+      );
+    }
+    if (suiteId === "llmperf") {
+      return (
+        <>
+          {renderSuiteFieldInput(suiteId, "c", "Server -c", "number", s.c)}
+          {renderSuiteFieldInput(suiteId, "np", "Server -np", "number", s.np)}
+          {renderSuiteFieldSelect(suiteId, "ctk", "-ctk", s.ctk, kvOpts)}
+          {renderSuiteFieldSelect(suiteId, "ctv", "-ctv", s.ctv, kvOpts)}
+          {renderSuiteFieldInput(suiteId, "concurrency", "--num-concurrent-requests", "number", s.concurrency)}
+          {renderSuiteFieldInput(suiteId, "maxCompleted", "--max-num-completed-requests", "number", s.maxCompleted)}
+          {renderSuiteFieldInput(suiteId, "meanInput", "--mean-input-tokens", "number", s.meanInput)}
+          {renderSuiteFieldInput(suiteId, "stddevInput", "--stddev-input-tokens", "number", s.stddevInput)}
+          {renderSuiteFieldInput(suiteId, "meanOutput", "--mean-output-tokens", "number", s.meanOutput)}
+          {renderSuiteFieldInput(suiteId, "stddevOutput", "--stddev-output-tokens", "number", s.stddevOutput)}
+        </>
+      );
+    }
+    if (suiteId === "speed_bench") {
+      return (
+        <>
+          {renderSuiteFieldSelect(suiteId, "contextPreset", "Server Context (-c)", s.contextPreset || String(s.c), [
+            { value: "16384", label: "16K (16384)" },
+            { value: "32768", label: "32K (32768)" },
+            { value: "65536", label: "64K (65536)" }
+          ])}
+          {renderSuiteFieldInput(suiteId, "np", "Server -np", "number", s.np)}
+          {renderSuiteFieldSelect(suiteId, "ctk", "-ctk", s.ctk, kvOpts)}
+          {renderSuiteFieldSelect(suiteId, "ctv", "-ctv", s.ctv, kvOpts)}
+          {renderSuiteFieldSelect(suiteId, "fa", "-fa", s.fa, faOpts)}
+          {renderSuiteFieldCheck(suiteId, "jinja", "--jinja Flag", s.jinja)}
+          {renderSuiteFieldInput(suiteId, "category", "--category", "text", s.category)}
+          {renderSuiteFieldInput(suiteId, "osl", "--osl", "number", s.osl)}
+          {renderSuiteFieldInput(suiteId, "concurrency", "--concurrency", "number", s.concurrency)}
+          {renderSuiteFieldInput(suiteId, "limit", "--limit", "number", s.limit)}
+          {renderSuiteFieldInput(suiteId, "compareBaselineFile", "Compare Baseline JSON", "text", s.compareBaselineFile)}
+          {renderSuiteFieldInput(suiteId, "compareSpeculativeFile", "Compare Speculative JSON", "text", s.compareSpeculativeFile)}
+        </>
+      );
+    }
+    if (suiteId === "agentperf") {
+      return (
+        <>
+          {renderSuiteFieldInput(suiteId, "c", "Server -c", "number", s.c)}
+          {renderSuiteFieldInput(suiteId, "np", "Server -np", "number", s.np)}
+          {renderSuiteFieldSelect(suiteId, "ctk", "-ctk", s.ctk, kvOpts)}
+          {renderSuiteFieldSelect(suiteId, "ctv", "-ctv", s.ctv, kvOpts)}
+          {renderSuiteFieldSelect(suiteId, "fa", "-fa", s.fa, faOpts)}
+          {renderSuiteFieldInput(suiteId, "extraFlags", "Extra Client Flags", "text", s.extraFlags || "")}
+        </>
+      );
+    }
+    if (suiteId === "aiperf_std") {
+      return (
+        <>
+          {renderSuiteFieldInput(suiteId, "c", "Server -c", "number", s.c)}
+          {renderSuiteFieldInput(suiteId, "np", "Server -np", "number", s.np)}
+          {renderSuiteFieldSelect(suiteId, "ctk", "-ctk", s.ctk, kvOpts)}
+          {renderSuiteFieldSelect(suiteId, "ctv", "-ctv", s.ctv, kvOpts)}
+          {renderSuiteFieldSelect(suiteId, "fa", "-fa", s.fa, faOpts)}
+          {renderSuiteFieldInput(suiteId, "concurrency", "--concurrency", "number", s.concurrency)}
+          {renderSuiteFieldInput(suiteId, "requestCount", "--request-count", "number", s.requestCount)}
+          {renderSuiteFieldInput(suiteId, "islMean", "--synthetic-input-tokens-mean", "number", s.islMean)}
+          {renderSuiteFieldInput(suiteId, "oslMean", "--output-tokens-mean", "number", s.oslMean)}
+          {renderSuiteFieldCheck(suiteId, "ignoreEos", "ignore_eos:true", s.ignoreEos)}
+        </>
+      );
+    }
+    if (suiteId === "aiperf_sweep") {
+      return (
+        <>
+          {renderSuiteFieldInput(suiteId, "c", "Server -c", "number", s.c)}
+          {renderSuiteFieldInput(suiteId, "np", "Server -np", "number", s.np)}
+          {renderSuiteFieldSelect(suiteId, "ctk", "-ctk", s.ctk, kvOpts)}
+          {renderSuiteFieldSelect(suiteId, "ctv", "-ctv", s.ctv, kvOpts)}
+          {renderSuiteFieldSelect(suiteId, "fa", "-fa", s.fa, faOpts)}
+          {renderSuiteFieldInput(suiteId, "islList", "Sweep ISLs", "text", s.islList)}
+          {renderSuiteFieldInput(suiteId, "oslList", "Sweep OSLs", "text", s.oslList)}
+          {renderSuiteFieldInput(suiteId, "concurrency", "--concurrency", "number", s.concurrency)}
+          {renderSuiteFieldInput(suiteId, "warmupCount", "--warmup-request-count", "number", s.warmupCount)}
+          {renderSuiteFieldInput(suiteId, "requestCount", "--request-count", "number", s.requestCount)}
+          {renderSuiteFieldInput(suiteId, "randomSeed", "--random-seed", "number", s.randomSeed)}
+          {renderSuiteFieldCheck(suiteId, "ignoreEos", "ignore_eos:true", s.ignoreEos)}
+          {renderSuiteFieldCheck(suiteId, "cachePrompt", "cache_prompt", s.cachePrompt)}
+        </>
+      );
+    }
+    return null;
+  };
+
+  const handleAuditEntries = async (entries, label) => {
+    if (!entries.length) return;
     const items = await auditFileList(entries, state);
-    const nextAudit = { items, lastFolderName: folderName, lastAuditedAt: new Date().toLocaleTimeString() };
-    setState((prev) => ({ ...prev, audit: nextAudit }));
-    await saveSnapshotIDB("latest_audit", nextAudit);
-  };
-
-  const handleAuditDrop = async (e) => {
-    e.preventDefault();
-    setDragOverAudit(false);
-    const dtItems = Array.from(e.dataTransfer.items || []);
-    const entries = [];
-    async function readEntry(entry, prefix) {
-      if (entry.isFile) {
-        await new Promise((res) => entry.file((file) => {
-          entries.push({ path: prefix + entry.name, name: entry.name, size: file.size, textLoader: () => file.text() });
-          res();
-        }));
-      } else if (entry.isDirectory) {
-        const reader = entry.createReader();
-        await new Promise((res) => {
-          const all = [];
-          const batch = () => reader.readEntries(async (list) => {
-            if (!list.length) {
-              for (const c of all) await readEntry(c, prefix + entry.name + "/");
-              res();
-            } else {
-              all.push(...list);
-              batch();
-            }
-          });
-          batch();
-        });
+    const parsedNew = [];
+    for (const ent of entries) {
+      if (/\.(md|json)$/i.test(ent.name) && ent.size > 120) {
+        const parsed = parseResultFile(ent.name, await ent.textLoader());
+        if (parsed) parsedNew.push(parsed);
       }
     }
-    for (const it of dtItems) {
-      const entry = it.webkitGetAsEntry ? it.webkitGetAsEntry() : null;
-      if (entry) await readEntry(entry, "");
-    }
-    if (!entries.length && e.dataTransfer.files) {
-      Array.from(e.dataTransfer.files).forEach((f) => entries.push({ path: f.name, name: f.name, size: f.size, textLoader: () => f.text() }));
-    }
-    if (entries.length) await runAuditEntries(entries, "Dropped Folder");
+    updateState((prev) => {
+      const existing = prev.results.loadedRecords || [];
+      const merged = [...existing];
+      parsedNew.forEach((p) => {
+        if (!merged.some((r) => r.sourceFile === p.sourceFile)) merged.push(p);
+      });
+      return {
+        ...prev,
+        audit: {
+          lastFolderName: label || (entries[0].path.includes("/") ? entries[0].path.split("/")[0] : `${entries.length} file(s)`),
+          lastAuditedAt: new Date().toLocaleTimeString(),
+          items
+        },
+        results: { ...prev.results, loadedRecords: merged }
+      };
+    });
   };
 
-  const handleResultFiles = async (fileList) => {
-    const parsed = [];
+  const handleFileListAudit = (fileList) => {
+    const entries = Array.from(fileList || []).map((f) => ({
+      name: f.name,
+      path: f.webkitRelativePath || f.name,
+      size: f.size,
+      textLoader: () => f.text()
+    }));
+    return handleAuditEntries(entries);
+  };
+
+  const handleDropAudit = async (e) => {
+    e.preventDefault();
+    setDragOver(false);
+    const items = e.dataTransfer?.items;
+    if (items && items.length && items[0].webkitGetAsEntry) {
+      const entries = [];
+      for (const item of Array.from(items)) {
+        const ent = item.webkitGetAsEntry();
+        if (ent) await readDroppedEntry(ent, entries);
+      }
+      await handleAuditEntries(entries);
+    } else if (e.dataTransfer?.files?.length) {
+      await handleFileListAudit(e.dataTransfer.files);
+    }
+  };
+
+  const handleCompareUpload = async (fileList) => {
+    const parsedList = [];
     for (const f of Array.from(fileList || [])) {
-      const rec = parseResultFile(f.name, await f.text());
-      if (rec) parsed.push(rec);
+      const parsed = parseResultFile(f.name, await f.text());
+      if (parsed) parsedList.push(parsed);
     }
-    if (parsed.length) {
-      const nextRecords = [...(state.results.loadedRecords || []), ...parsed];
-      setState((prev) => ({ ...prev, results: { ...prev.results, loadedRecords: nextRecords } }));
-      await saveSnapshotIDB("latest_results", nextRecords);
+    if (parsedList.length) {
+      updateState((prev) => ({
+        ...prev,
+        results: { ...prev.results, loadedRecords: [...(prev.results.loadedRecords || []), ...parsedList] }
+      }));
     }
   };
 
-  // Derived lists for Run / Results / Remote
-  const auditItems = state.audit.items || {};
-  const verifiedCount = Object.values(auditItems).filter((i) => i && i.status === "verified").length;
-  const outstandingSuitesText = SUITE_METADATA
-    .filter((m) => !(auditItems[m.id] && auditItems[m.id].status === "verified"))
-    .map((m) => m.shortLabel || m.id)
-    .join(", ") || "all verified";
-
-  const suiteOrder = ["agentperf", "aiperf_std", "aiperf_sweep", "llama_bench", "llama_benchy", "llmperf", "speed_bench"];
-  const metaMap = useMemo(() => {
-    const m = {};
-    SUITE_METADATA.forEach((x) => { m[x.id] = x; });
-    return m;
-  }, []);
-
-  const modelOptions = useMemo(() => {
-    const arr = QUICK_MODELS.map((m) => ({ id: m.id, label: `${m.alias} (${m.quant || "Q4_K_M"})`, alias: m.alias }));
-    (state.customModels || []).forEach((cm, idx) => arr.push({ id: `custom_${idx}`, label: `${cm.alias} (Custom)`, alias: cm.alias }));
-    return arr;
-  }, [state.customModels]);
-  const activeModelMatch = modelOptions.find((o) => o.alias === state.model.alias);
-
-  const remoteSections = useMemo(() => {
-    const cmds = buildSshCommands(state);
-    const items = [
-      { id: "ssh_ps", label: "SSH PowerShell", code: cmds.psTrigger },
-      { id: "ssh_tmux", label: "tmux Split", code: cmds.tmuxLaunch },
-      { id: "ssh_scp", label: "SCP Pull Results", code: cmds.scpPull },
-      { id: "ssh_vram", label: "DGX VRAM Sweep", code: cmds.vramSweep },
-      { id: "ssh_startai", label: "Restore start-ai", code: cmds.startAiRestore },
-      { id: "ssh_hermes", label: "Hermes YAML", code: cmds.hermesYaml },
-      { id: "audit_deep", label: "Deep Audit Script", code: buildDeepAuditScript(state) }
-    ];
-    buildSetupCards(state).forEach((c) => items.push({ id: c.id, label: c.badge, code: c.cmd }));
-    return items;
-  }, [state]);
-  const activeRemote = remoteSections.find((r) => r.id === state.ui.remoteSection) || remoteSections[0];
-
-  const baseTiers = useMemo(() => {
-    const arr = [16, 24, 32, 48, 64, 96, 128];
-    if (!arr.includes(vramGb)) arr.push(vramGb);
-    return arr.sort((a, b) => a - b);
-  }, [vramGb]);
-
-  const records = state.results.loadedRecords || [];
-  const benchBars = [];
-  const depthBars = [];
-  const concBars = [];
-  if (state.ui.showCharts) {
-    records.filter((r) => r.suiteType === "llama_bench").forEach((r) => {
-      if (r.metrics.tg128) benchBars.push({ label: `${r.gpuLabel.split(" ")[0]} ${r.modelLabel.split(" ")[0]} tg128`, value: r.metrics.tg128, color: "var(--accent)" });
-      if (r.metrics.pp512) benchBars.push({ label: `${r.gpuLabel.split(" ")[0]} ${r.modelLabel.split(" ")[0]} pp/10`, value: Math.round(r.metrics.pp512 / 10), color: "var(--ok)" });
-    });
-    records.filter((r) => r.suiteType === "llama_benchy").forEach((r) => {
-      depthBars.push({ label: `${r.gpuLabel.split(" ")[0]} ${r.modelLabel.split(" ")[0]}`, value: r.metrics.degradationPct || 0, color: "var(--warn)" });
-    });
-    records.filter((r) => r.suiteType === "llmperf").forEach((r) => {
-      concBars.push({ label: `${r.gpuLabel.split(" ")[0]} ${r.modelLabel.split(" ")[0]}`, value: r.metrics.totalTps || 0, color: "var(--accent)" });
-    });
-  }
-
-  const tabs = [
-    { id: "system", label: "System" },
-    { id: "models", label: "Models" },
-    { id: "run", label: "Run" },
-    { id: "results", label: "Results" },
-    { id: "remote", label: "Remote & Setup" }
+  const { warnings } = evaluateGuardrails(state);
+  const activeRecords = [
+    ...(state.results.includeSampleData ? SAMPLE_RESULTS_DATASET : []),
+    ...(state.results.loadedRecords || [])
   ];
 
-  const selectedSuites = state.ui.selectedRunSuites || [];
+  const sshCmds = buildSshCommands(state);
+  const setupCards = buildSetupCards(state).filter(
+    (c) => profile.os === "windows" || c.id !== "setup_cleanup"
+  );
+  const sshCards = [
+    { id: "psTrigger", title: "Windows PowerShell SSH Trigger", cmd: sshCmds.psTrigger },
+    { id: "tmuxLaunch", title: "tmux Split Session", cmd: sshCmds.tmuxLaunch },
+    { id: "scpPull", title: "scp Pull Remote Results", cmd: sshCmds.scpPull },
+    { id: "vramSweep", title: "DGX Pre-Benchmark VRAM Sweep", cmd: sshCmds.vramSweep },
+    { id: "startAiRestore", title: "Restore start-ai Stack (DGX)", cmd: sshCmds.startAiRestore },
+    ...setupCards.map((c) => ({ id: c.id, title: c.title, cmd: c.cmd }))
+  ];
 
   return (
     <div className="sb-container">
@@ -438,22 +579,31 @@ export default function App() {
         <div className="sb-brand-cluster">
           <span className="sb-brand">ai-benchmate</span>
           <span className="sb-version">1.0.0</span>
-          <span className="sb-pill">platform: <strong>{profile.id}</strong></span>
-          <span className="sb-pill">memory: <strong>{poolType} {vramGb} GiB</strong></span>
-          <span className="sb-pill">binding: <strong>system_usable {budgetGib} GiB</strong></span>
-          <span className="sb-pill sb-pill-quiet">localhost only · publishes nothing</span>
+          <span className="sb-pill">
+            platform: <strong>{profile.shortName}</strong>
+          </span>
+          <span className="sb-pill">
+            vram: <strong>{state.hardware.vramGb} GB</strong>
+          </span>
+          <span className="sb-pill">
+            model: <strong>{state.model.alias || state.model.slug}</strong>
+          </span>
         </div>
 
         <div className="sb-header-controls">
           <button
             type="button"
             className={`sb-ctrl-btn ${state.ui.pauseAnimations ? "is-active" : ""}`}
-            onClick={() => updateUi({ pauseAnimations: !state.ui.pauseAnimations })}
-            title="Pause Animations & Benchmark Stealth Mode"
+            onClick={() => updateState((p) => ({ ...p, ui: { ...p.ui, pauseAnimations: !p.ui.pauseAnimations } }))}
           >
-            {state.ui.pauseAnimations ? "Stealth: ON" : "Pause Animations"}
+            {state.ui.pauseAnimations ? "Resume Animations" : "Pause Animations"}
           </button>
-          <select className="sb-ctrl-select" aria-label="Theme" value={state.ui.theme} onChange={(e) => updateUi({ theme: e.target.value })}>
+          <select
+            className="sb-ctrl-select"
+            aria-label="Theme"
+            value={state.ui.theme}
+            onChange={(e) => updateState((p) => ({ ...p, ui: { ...p.ui, theme: e.target.value } }))}
+          >
             <option value="light">Light</option>
             <option value="dark">Dark</option>
             <option value="system">System</option>
@@ -462,12 +612,16 @@ export default function App() {
       </header>
 
       <nav className="folder-tabs" aria-label="Primary Tabs">
-        {tabs.map((t) => (
+        {[
+          { id: "benchmarks", label: "Benchmarks" },
+          { id: "results", label: "Results & Audit" },
+          { id: "ssh", label: "SSH & Setup" }
+        ].map((t) => (
           <button
             key={t.id}
             type="button"
-            className={`folder-tab ${state.ui.activeTab === t.id ? "active" : ""}`}
-            onClick={() => updateUi({ activeTab: t.id })}
+            className={`folder-tab ${tab === t.id ? "active" : ""}`}
+            onClick={() => updateState((p) => ({ ...p, ui: { ...p.ui, activeTab: t.id } }))}
           >
             {t.label}
           </button>
@@ -475,566 +629,714 @@ export default function App() {
       </nav>
 
       <main className="sb-card">
-        {state.ui.activeTab === "system" && (
+        {tab === "benchmarks" && (
           <>
-            <h2 className="sb-section-title">System & Platform Configuration</h2>
-            <div className="sb-form-grid">
-              <div className="sb-field">
-                <label>Target Compute Profile</label>
-                <select className="sb-select" value={state.hardware.profileId} onChange={(e) => switchHardwareProfile(e.target.value)}>
-                  {Object.values(HARDWARE_PROFILES).map((p) => (
-                    <option key={p.id} value={p.id}>{p.name} ({p.shell})</option>
-                  ))}
-                </select>
-              </div>
-              <div className="sb-field">
-                <label>VRAM Capacity (GiB)</label>
-                <input type="number" className="sb-input mono" value={state.hardware.vramGb} min={4} max={512} onChange={(e) => updateHardware({ vramGb: Number(e.target.value) || 32 })} />
-              </div>
-              {state.hardware.profileId === "amd_win_x64" && (
-                <div className="sb-field">
-                  <label>AMD Compute Backend</label>
-                  <select className="sb-select" value={state.hardware.amdBackend} onChange={(e) => updateHardware({ amdBackend: e.target.value, binDir: e.target.value === "rocm" ? "C:\\llama.cpp\\hip" : "C:\\llama.cpp\\vulkan" })}>
-                    <option value="vulkan">Vulkan0 (Default)</option>
-                    <option value="rocm">ROCm / HIP0</option>
+            <div className="config-section">
+              <div className="config-bar">
+                <label className="sb-field-inline">
+                  Platform
+                  <select className="sb-select" value={state.hardware.profileId} onChange={(e) => handleChangeProfile(e.target.value)}>
+                    {Object.values(HARDWARE_PROFILES).map((p) => (
+                      <option key={p.id} value={p.id}>
+                        {p.name}
+                      </option>
+                    ))}
                   </select>
-                </div>
-              )}
-              {profile.supportsMultiGpu && (
-                <>
-                  <div className="sb-field">
-                    <label>CUDA Device (--device)</label>
-                    <input type="text" className="sb-input mono" value={state.hardware.nvidiaDevice} onChange={(e) => updateHardware({ nvidiaDevice: e.target.value })} />
-                  </div>
-                  <div className="sb-field">
-                    <label>Multi-GPU Tensor Split (Optional)</label>
-                    <input type="text" className="sb-input mono" value={state.hardware.tensorSplit} placeholder="0.5,0.5" onChange={(e) => updateHardware({ tensorSplit: e.target.value })} />
-                  </div>
-                </>
-              )}
-              <div className="sb-field">
-                <label>Server Host & Port</label>
-                <div className="sb-inline-row" style={{ gap: "6px", flexWrap: "nowrap" }}>
-                  <input type="text" className="sb-input mono" value={state.hardware.host} style={{ flex: 1, minWidth: "90px" }} onChange={(e) => updateHardware({ host: e.target.value })} />
-                  <input type="number" className="sb-input mono" value={state.hardware.port} style={{ width: "82px" }} onChange={(e) => updateHardware({ port: Number(e.target.value) || 8080 })} />
-                </div>
-              </div>
-              <div className="sb-field">
-                <label>Dynamic Result Naming</label>
-                <select className="sb-select" value={state.naming.mode} onChange={(e) => setState((prev) => ({ ...prev, naming: { ...prev.naming, mode: e.target.value } }))}>
-                  <option value="auto">Auto (Stamp on Customize)</option>
-                  <option value="stamped">Mode A · Parameter-Stamped</option>
-                  <option value="classic">Mode B · Classic Parity</option>
-                </select>
-              </div>
-              <div className="sb-field">
-                <label>Client --model Argument</label>
-                <select className="sb-select" value={state.model.clientModelMode} onChange={(e) => updateModel({ clientModelMode: e.target.value })}>
-                  <option value="alias">Served Alias (--alias)</option>
-                  <option value="fullpath">Full GGUF File Path</option>
-                </select>
-              </div>
-            </div>
+                </label>
 
-            <h3 className="sb-sub-title">Directory Paths</h3>
-            <div className="sb-form-grid">
-              <div className="sb-field"><label>llama.cpp Binaries</label><input type="text" className="sb-input mono" value={state.hardware.binDir} onChange={(e) => updateHardware({ binDir: e.target.value })} /></div>
-              <div className="sb-field"><label>Centralized Results</label><input type="text" className="sb-input mono" value={state.hardware.resultsDir} onChange={(e) => updateHardware({ resultsDir: e.target.value })} /></div>
-              <div className="sb-field"><label>Benchmarks Root (Venvs)</label><input type="text" className="sb-input mono" value={state.hardware.benchRoot} onChange={(e) => updateHardware({ benchRoot: e.target.value })} /></div>
-              <div className="sb-field"><label>llama.cpp Repo Root</label><input type="text" className="sb-input mono" value={state.hardware.repoDir} onChange={(e) => updateHardware({ repoDir: e.target.value })} /></div>
-            </div>
-
-            <div className="sb-inline-row" style={{ marginTop: "16px", justifyContent: "space-between" }}>
-              <div className="sb-inline-row">
-                {state.hardware.profileId === "dgx_spark_linux_arm64" && (
-                  <label className="suite-check-label"><input type="checkbox" checked={state.hardware.nonSudoSetup} onChange={(e) => updateHardware({ nonSudoSetup: e.target.checked })} /> Non-sudo setup (skip apt python3-dev)</label>
-                )}
-                {state.hardware.profileId === "rtx_spark_win_arm64" && (
-                  <label className="suite-check-label"><input type="checkbox" checked={state.hardware.rtxArmTdigestCompile} onChange={(e) => updateHardware({ rtxArmTdigestCompile: e.target.checked })} /> Compile aiperf[tdigest] C extension</label>
-                )}
-                {state.hardware.profileId === "amd_win_x64" && state.hardware.amdBackend === "vulkan" && (
-                  <label className="suite-check-label"><input type="checkbox" checked={state.hardware.amdEnableFa} onChange={(e) => updateHardware({ amdEnableFa: e.target.checked })} /> Enable -fa 1 on Vulkan</label>
-                )}
-                <label className="suite-check-label"><input type="checkbox" checked={state.ui.lightTerminal} onChange={(e) => updateUi({ lightTerminal: e.target.checked })} /> Light Terminal (#F0EFEA)</label>
-              </div>
-              <button
-                type="button"
-                className="btn btn-outline"
-                onClick={() => setState((prev) => ({ ...prev, suites: JSON.parse(JSON.stringify(PARITY_DEFAULTS)), naming: { ...prev.naming, activePresetName: "Baseline Parity Defaults" } }))}
-              >
-                Reset Suites to Parity Defaults
-              </button>
-            </div>
-          </>
-        )}
-
-        {state.ui.activeTab === "models" && (
-          <>
-            <h2 className="sb-section-title">What fits, and at what context</h2>
-            <div className="sb-inline-row">
-              <label className="sb-field-inline">
-                <span>Tier</span>
-                <select className="sb-select" value={vramGb} onChange={(e) => updateHardware({ vramGb: Number(e.target.value) || 64 })}>
-                  {baseTiers.map((t) => <option key={t} value={t}>{t}</option>)}
-                </select>
-              </label>
-              <label className="sb-field-inline">
-                <span>KV</span>
-                <select className="sb-select" value={state.ui.fitKv || "fp16"} onChange={(e) => updateUi({ fitKv: e.target.value })}>
-                  <option value="fp16">f16</option>
-                  <option value="q8_0">q8_0</option>
-                  <option value="q4_0">q4_0</option>
-                </select>
-              </label>
-              <button type="button" className="btn btn-outline" onClick={() => setRefreshTick((n) => n + 1)}>Refresh</button>
-              <span className="small muted">Every answer is a model and a context. A fit at 2K is not a usable result. Click a row to select.</span>
-            </div>
-
-            <div className="sb-table-wrap">
-              <table className="sb-table">
-                <thead>
-                  <tr>
-                    <th>Model</th>
-                    <th>Quant</th>
-                    <th>Kind</th>
-                    <th className="num">Best ctx</th>
-                    <th className="num">Total</th>
-                    <th className="num">Budget</th>
-                    <th className="num">Headroom</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {fitRows.map((r) => {
-                    const isSelected = state.model.alias === r.rawModel.alias;
-                    return (
-                      <tr key={r.id} className={isSelected ? "is-selected" : ""} onClick={() => selectModelById(r.id)} title={`Click to select ${r.modelLabel}`}>
-                        <td>{r.modelLabel}</td>
-                        <td className="mono">{r.quant}</td>
-                        <td className="mono">{r.kind}</td>
-                        <td className="num mono">{r.bestCtxLabel}</td>
-                        <td className="num mono">{r.totalGib.toFixed(2)}</td>
-                        <td className="num mono">{r.budgetGib.toFixed(1)}</td>
-                        <td className="num mono" style={!r.fits ? { color: "var(--danger)", fontWeight: 600 } : undefined}>{r.headroomGib.toFixed(2)}</td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
-            </div>
-
-            <div className="sb-inline-row" style={{ marginTop: "14px" }}>
-              <span className="small muted" style={{ fontWeight: 600 }}>Custom .gguf:</span>
-              <input
-                type="text"
-                className="sb-input sb-input-wide mono"
-                value={state.model.fullPath}
-                placeholder="Paste full Windows or Linux .gguf path to auto-fill alias & slug"
-                onChange={(e) => {
-                  const p = parseModelPath(e.target.value);
-                  updateModel({ fullPath: e.target.value, baseDir: p.baseDir, filename: p.filename, alias: p.alias, slug: p.slug, tokenizer: p.tokenizer, weightGb: p.weightGb, paramsB: p.paramsB });
-                }}
-              />
-              <button
-                type="button"
-                className="btn btn-outline"
-                onClick={() => setState((prev) => ({
-                  ...prev,
-                  customModels: prev.customModels.some((m) => m.fullPath === prev.model.fullPath) ? prev.customModels : [...prev.customModels, { ...prev.model }]
-                }))}
-              >
-                + Save Model
-              </button>
-            </div>
-          </>
-        )}
-
-        {state.ui.activeTab === "run" && (
-          <>
-            <h2 className="sb-section-title">Run benchmarks</h2>
-            <div className="outstanding-box">
-              <div className="outstanding-heading">One click: the outstanding parity benchmarks.</div>
-              <div className="outstanding-list">
-                <div className={`outstanding-row ${state.model.slug === "qwen38" ? "is-active" : ""}`} onClick={() => selectModelById("qwen38_27b")}>
-                  <div className="outstanding-left"><strong>qwen38-27b</strong> · {outstandingSuitesText}</div>
-                  <div className="outstanding-right">AIPerf 64k/1k TTFT and E2E, plus Dense 27B parity suites</div>
-                </div>
-                <div className={`outstanding-row ${state.model.slug === "qwen36" ? "is-active" : ""}`} onClick={() => selectModelById("qwen36_35b_moe")}>
-                  <div className="outstanding-left"><strong>qwen36-35b-a3b</strong> · aiperf-64k, speed-bench, llama-bench, llama-benchy, llmperf</div>
-                  <div className="outstanding-right">AIPerf 64k/1k TTFT and E2E on the MoE model</div>
-                </div>
-              </div>
-            </div>
-
-            <div className="sb-inline-row" style={{ marginBottom: "18px" }}>
-              <CopyButton
-                text={buildSelectedSuitesPreview({ ...state, ui: { ...state.ui, previewMode: "outstanding" } })}
-                label="Run everything outstanding"
-                className="btn btn-primary"
-                onClickExtra={() => updateUi({ previewMode: "outstanding" })}
-              />
-              <button type="button" className="btn btn-outline" onClick={() => updateUi({ previewMode: "prereqs" })}>Check prerequisites only</button>
-            </div>
-
-            <h3 className="sb-sub-title">Or a single run</h3>
-            <div className="sb-inline-row" style={{ marginBottom: "10px" }}>
-              <label className="sb-field-inline">
-                <span>Model</span>
-                <select className="sb-select" value={activeModelMatch ? activeModelMatch.id : "__current__"} onChange={(e) => e.target.value !== "__current__" && selectModelById(e.target.value)}>
-                  {!activeModelMatch && <option value="__current__">{state.model.alias} (Custom Path)</option>}
-                  {modelOptions.map((o) => <option key={o.id} value={o.id}>{o.label}</option>)}
-                </select>
-              </label>
-
-              <span className="sb-field-inline"><span>Suites</span></span>
-              <div className="suite-checks">
-                {suiteOrder.map((sid) => {
-                  const m = metaMap[sid];
-                  const checked = selectedSuites.includes(sid);
-                  const verified = auditItems[sid] && auditItems[sid].status === "verified";
-                  return (
-                    <label key={sid} className={`suite-check-label ${verified ? "is-verified" : ""}`} title={m.title}>
-                      <input
-                        type="checkbox"
-                        checked={checked}
-                        onChange={(e) => {
-                          const nextSet = new Set(selectedSuites);
-                          if (e.target.checked) nextSet.add(sid);
-                          else nextSet.delete(sid);
-                          updateUi({ selectedRunSuites: Array.from(nextSet), previewMode: "selected" });
-                        }}
-                      />
-                      <span>{m.shortLabel || sid}</span>
-                    </label>
-                  );
-                })}
-              </div>
-            </div>
-
-            <div className="sb-inline-row">
-              <label className="sb-field-inline" style={{ minWidth: "240px" }}>
-                <span>Note</span>
-                <input
-                  type="text"
-                  className="sb-input"
-                  style={{ minWidth: "190px" }}
-                  placeholder="Performance fan profile"
-                  value={state.ui.runNote || ""}
-                  onChange={(e) => updateUi({ runNote: e.target.value })}
-                />
-              </label>
-              <button type="button" className="btn btn-outline" onClick={() => updateUi({ previewMode: "selected" })}>Preview commands</button>
-              <CopyButton text={runPreviewCode} label="Copy commands" className="btn btn-primary" />
-              <button type="button" className="btn btn-outline" onClick={() => updateUi({ showParamCustomize: !state.ui.showParamCustomize })}>
-                Customize parameters {state.ui.showParamCustomize ? "▴" : "▾"}
-              </button>
-              <button
-                type="button"
-                className="btn btn-outline"
-                onClick={() => downloadFile(`ai_benchmate_${state.model.slug || "run"}.${profile.os === "windows" ? "ps1" : "sh"}`, runPreviewCode)}
-              >
-                Download {profile.os === "windows" ? ".ps1" : ".sh"}
-              </button>
-            </div>
-
-            {guardrails.warnings.map((w) => (
-              <div key={w.id} className={`sb-banner ${w.severity === "crimson" ? "sb-banner-danger" : "sb-banner-warn"}`}>
-                <div><strong>{w.title}:</strong> {w.detail}</div>
-                <button type="button" className="btn btn-sm btn-outline" onClick={() => applyGuardrailFix(w.id)}>{w.fixLabel}</button>
-              </div>
-            ))}
-
-            {state.ui.showParamCustomize && (
-              <div className="sb-drawer">
-                <div className="sb-inline-row" style={{ justifyContent: "space-between", marginBottom: "10px" }}>
-                  <strong style={{ fontSize: "13px" }}>Customize Model Fields, Naming & Active Suite Parameters</strong>
-                  <button
-                    type="button"
-                    className="btn btn-sm btn-outline"
-                    onClick={() => setState((prev) => ({ ...prev, suites: JSON.parse(JSON.stringify(PARITY_DEFAULTS)), naming: { ...prev.naming, activePresetName: "Baseline Parity Defaults" } }))}
-                  >
-                    Reset to Parity Defaults
-                  </button>
-                </div>
-                <div className="sb-form-grid" style={{ marginBottom: "12px" }}>
-                  <div className="sb-field"><label>Model Alias (--alias)</label><input type="text" className="sb-input mono" value={state.model.alias} onChange={(e) => updateModel({ alias: e.target.value })} /></div>
-                  <div className="sb-field"><label>Output File Slug</label><input type="text" className="sb-input mono" value={state.model.slug} onChange={(e) => updateModel({ slug: e.target.value })} /></div>
-                  <div className="sb-field"><label>HF Tokenizer ID</label><input type="text" className="sb-input mono" value={state.model.tokenizer} onChange={(e) => updateModel({ tokenizer: e.target.value })} /></div>
-                  <div className="sb-field">
-                    <label>Result Naming Mode</label>
-                    <select className="sb-select" value={state.naming.mode} onChange={(e) => setState((prev) => ({ ...prev, naming: { ...prev.naming, mode: e.target.value } }))}>
-                      <option value="auto">Auto (Stamp on Customize)</option>
-                      <option value="stamped">Mode A · Parameter-Stamped</option>
-                      <option value="classic">Mode B · Classic Parity</option>
-                    </select>
-                  </div>
-                </div>
-                <div className="sb-form-grid">
-                  {selectedSuites.includes("llama_bench") && (
-                    <div className="sb-field"><label>llama-bench (-p / -n / -r)</label>
-                      <div className="sb-inline-row" style={{ gap: "6px" }}>
-                        <input type="text" className="sb-input mono" style={{ width: "92px" }} value={state.suites.llama_bench.p} onChange={(e) => updateSuiteField("llama_bench", "p", e.target.value)} />
-                        <input type="text" className="sb-input mono" style={{ width: "82px" }} value={state.suites.llama_bench.n} onChange={(e) => updateSuiteField("llama_bench", "n", e.target.value)} />
-                        <input type="number" className="sb-input mono" style={{ width: "58px" }} value={state.suites.llama_bench.r} onChange={(e) => updateSuiteField("llama_bench", "r", Number(e.target.value) || 0)} />
-                      </div>
-                    </div>
-                  )}
-                  {selectedSuites.includes("llama_benchy") && (
-                    <div className="sb-field"><label>llama-benchy (-c / depth / runs)</label>
-                      <div className="sb-inline-row" style={{ gap: "6px" }}>
-                        <input type="number" className="sb-input mono" style={{ width: "84px" }} value={state.suites.llama_benchy.c} onChange={(e) => updateSuiteField("llama_benchy", "c", Number(e.target.value) || 0)} />
-                        <input type="text" className="sb-input mono" style={{ width: "84px" }} value={state.suites.llama_benchy.depth} onChange={(e) => updateSuiteField("llama_benchy", "depth", e.target.value)} />
-                        <input type="number" className="sb-input mono" style={{ width: "54px" }} value={state.suites.llama_benchy.runs} onChange={(e) => updateSuiteField("llama_benchy", "runs", Number(e.target.value) || 0)} />
-                      </div>
-                    </div>
-                  )}
-                  {selectedSuites.includes("llmperf") && (
-                    <div className="sb-field"><label>llmperf (in / out / conc / max)</label>
-                      <div className="sb-inline-row" style={{ gap: "6px" }}>
-                        <input type="number" className="sb-input mono" style={{ width: "68px" }} value={state.suites.llmperf.meanInput} onChange={(e) => updateSuiteField("llmperf", "meanInput", Number(e.target.value) || 0)} />
-                        <input type="number" className="sb-input mono" style={{ width: "64px" }} value={state.suites.llmperf.meanOutput} onChange={(e) => updateSuiteField("llmperf", "meanOutput", Number(e.target.value) || 0)} />
-                        <input type="number" className="sb-input mono" style={{ width: "52px" }} value={state.suites.llmperf.concurrency} onChange={(e) => updateSuiteField("llmperf", "concurrency", Number(e.target.value) || 0)} />
-                        <input type="number" className="sb-input mono" style={{ width: "54px" }} value={state.suites.llmperf.maxCompleted} onChange={(e) => updateSuiteField("llmperf", "maxCompleted", Number(e.target.value) || 0)} />
-                      </div>
-                    </div>
-                  )}
-                  {selectedSuites.includes("speed_bench") && (
-                    <div className="sb-field"><label>SPEED-Bench (-c / category / limit)</label>
-                      <div className="sb-inline-row" style={{ gap: "6px" }}>
-                        <input type="number" className="sb-input mono" style={{ width: "82px" }} value={state.suites.speed_bench.c} onChange={(e) => updateSuiteField("speed_bench", "c", Number(e.target.value) || 0)} />
-                        <input type="text" className="sb-input mono" style={{ width: "68px" }} value={state.suites.speed_bench.category} onChange={(e) => updateSuiteField("speed_bench", "category", e.target.value)} />
-                        <input type="number" className="sb-input mono" style={{ width: "54px" }} value={state.suites.speed_bench.limit} onChange={(e) => updateSuiteField("speed_bench", "limit", Number(e.target.value) || 0)} />
-                      </div>
-                    </div>
-                  )}
-                  {selectedSuites.includes("aiperf_std") && (
-                    <div className="sb-field"><label>AIPerf Standard (-c / conc / reqs)</label>
-                      <div className="sb-inline-row" style={{ gap: "6px" }}>
-                        <input type="number" className="sb-input mono" style={{ width: "82px" }} value={state.suites.aiperf_std.c} onChange={(e) => updateSuiteField("aiperf_std", "c", Number(e.target.value) || 0)} />
-                        <input type="number" className="sb-input mono" style={{ width: "54px" }} value={state.suites.aiperf_std.concurrency} onChange={(e) => updateSuiteField("aiperf_std", "concurrency", Number(e.target.value) || 0)} />
-                        <input type="number" className="sb-input mono" style={{ width: "60px" }} value={state.suites.aiperf_std.requestCount} onChange={(e) => updateSuiteField("aiperf_std", "requestCount", Number(e.target.value) || 0)} />
-                      </div>
-                    </div>
-                  )}
-                  {selectedSuites.includes("aiperf_sweep") && (
-                    <div className="sb-field"><label>AIPerf 64k (-c / KV / isl)</label>
-                      <div className="sb-inline-row" style={{ gap: "6px" }}>
-                        <input type="number" className="sb-input mono" style={{ width: "82px" }} value={state.suites.aiperf_sweep.c} onChange={(e) => updateSuiteField("aiperf_sweep", "c", Number(e.target.value) || 0)} />
-                        <select className="sb-select" style={{ width: "74px" }} value={state.suites.aiperf_sweep.ctk} onChange={(e) => { updateSuiteField("aiperf_sweep", "ctk", e.target.value); updateSuiteField("aiperf_sweep", "ctv", e.target.value); }}>
-                          <option value="fp16">fp16</option>
-                          <option value="q8_0">q8_0</option>
-                          <option value="q4_0">q4_0</option>
-                        </select>
-                        <input type="text" className="sb-input mono" style={{ width: "140px" }} value={state.suites.aiperf_sweep.islList} onChange={(e) => updateSuiteField("aiperf_sweep", "islList", e.target.value)} />
-                      </div>
-                    </div>
-                  )}
-                </div>
-              </div>
-            )}
-
-            <TerminalBox titleLeft={`${state.ui.previewMode || "selected"} · ${profile.shell} · ${state.model.alias}`} code={runPreviewCode} />
-          </>
-        )}
-
-        {state.ui.activeTab === "results" && (
-          <>
-            <h2 className="sb-section-title">Results & Anti-1KB Audit Coverage ({verifiedCount}/7 Verified)</h2>
-            <div className="sb-inline-row">
-              {typeof window.showDirectoryPicker === "function" && (
-                <button
-                  type="button"
-                  className="btn btn-primary"
-                  onClick={async () => {
-                    try {
-                      const dirHandle = await window.showDirectoryPicker();
-                      const entries = [];
-                      async function walk(handle, prefix) {
-                        for await (const [name, child] of handle.entries()) {
-                          const rel = prefix ? `${prefix}/${name}` : name;
-                          if (child.kind === "file") {
-                            const f = await child.getFile();
-                            entries.push({ path: rel, name, size: f.size, textLoader: () => f.text() });
-                          } else if (child.kind === "directory") {
-                            await walk(child, rel);
+                {profile.id === "amd_win_x64" && (
+                  <label className="sb-field-inline">
+                    Backend
+                    <select
+                      className="sb-select"
+                      value={state.hardware.amdBackend}
+                      onChange={(e) =>
+                        updateState((p) => ({
+                          ...p,
+                          hardware: {
+                            ...p.hardware,
+                            amdBackend: e.target.value,
+                            binDir: e.target.value === "rocm" ? "C:\\llama.cpp\\rocm" : "C:\\llama.cpp\\vulkan"
                           }
-                        }
+                        }))
                       }
-                      await walk(dirHandle, "");
-                      await runAuditEntries(entries, dirHandle.name);
-                    } catch {}
-                  }}
-                >
-                  Open Results Folder
-                </button>
-              )}
-              <label className="btn btn-outline" style={{ cursor: "pointer" }}>
-                Select Folder
-                <input
-                  type="file"
-                  webkitdirectory=""
-                  multiple
-                  className="hidden"
-                  onChange={async (e) => {
-                    const files = Array.from(e.target.files || []);
-                    if (!files.length) return;
-                    const entries = files.map((f) => ({ path: f.webkitRelativePath || f.name, name: f.name, size: f.size, textLoader: () => f.text() }));
-                    await runAuditEntries(entries, (files[0].webkitRelativePath || "").split("/")[0] || "Selected Folder");
-                  }}
-                />
-              </label>
-              <button
-                type="button"
-                className="btn btn-outline"
-                onClick={() => {
-                  const missing = SUITE_METADATA.filter((m) => !(auditItems[m.id] && auditItems[m.id].status === "verified")).map((m) => m.id);
-                  updateUi({ selectedRunSuites: missing, previewMode: "outstanding", activeTab: "run" });
-                }}
-              >
-                Select Missing in Run Tab
-              </button>
-              <span className="small muted">
-                {state.audit.lastFolderName ? `Last Audited: ${state.audit.lastFolderName} (${state.audit.lastAuditedAt})` : "Inspects byte sizes & parsed JSON/MD rows."}
-              </span>
-            </div>
+                    >
+                      <option value="vulkan">Vulkan</option>
+                      <option value="rocm">ROCm HIP</option>
+                    </select>
+                  </label>
+                )}
 
-            <div
-              className={`sb-dropzone ${dragOverAudit ? "dragover" : ""}`}
-              onDragOver={(e) => { e.preventDefault(); setDragOverAudit(true); }}
-              onDragLeave={() => setDragOverAudit(false)}
-              onDrop={handleAuditDrop}
-            >
-              <strong>Drop Centralized Results Folder or Benchmark Files Here</strong>
-              <div className="small muted">Detects &gt;1 KB stubs, incomplete <code>llama-benchy</code> depth runs, and <code>aiperf.log</code> overflow errors.</div>
-            </div>
+                <label className="sb-field-inline">
+                  VRAM (GB)
+                  <input
+                    type="number"
+                    className="sb-input"
+                    style={{ width: "76px" }}
+                    value={state.hardware.vramGb}
+                    onChange={(e) => updateState((p) => ({ ...p, hardware: { ...p.hardware, vramGb: Number(e.target.value) || 0 } }))}
+                  />
+                </label>
 
-            <div className="sb-table-wrap">
-              <table className="sb-table">
-                <thead><tr><th>Suite</th><th>Expected Output Target</th><th>Status</th><th>Audit Findings</th></tr></thead>
-                <tbody>
-                  {SUITE_METADATA.map((meta) => {
-                    const exp = getOutputTarget(state, meta.id);
-                    const r = auditItems[meta.id] || { status: "not_run", label: "NOT RUN", detail: "Select or drop a folder to audit." };
-                    const cls = r.status === "verified" ? "sb-badge-ok" : r.status === "partial" ? "sb-badge-warn" : r.status === "stub" ? "sb-badge-danger" : "";
+                <div className="sb-pill-row">
+                  {QUICK_MODELS.map((m) => {
+                    const active = state.model.slug === m.slug || state.model.alias === m.alias;
                     return (
-                      <tr key={meta.id}>
-                        <td><strong>{meta.shortLabel || meta.id}</strong></td>
-                        <td className="mono small">{exp.leaf}</td>
-                        <td><span className={`sb-badge ${cls}`}>{r.label}</span></td>
-                        <td className="small muted">{r.detail}</td>
-                      </tr>
+                      <button key={m.id} type="button" className={`sb-chip ${active ? "active" : ""}`} onClick={() => handleSelectModel(m)}>
+                        {m.label}
+                      </button>
                     );
                   })}
-                </tbody>
-              </table>
-            </div>
+                  {(state.customModels || []).map((m) => {
+                    const active = state.model.slug === m.slug || state.model.alias === m.alias;
+                    return (
+                      <span key={m.id} className="sb-chip-group">
+                        <button type="button" className={`sb-chip ${active ? "active" : ""}`} onClick={() => handleSelectModel(m)}>
+                          {m.label || m.alias}
+                        </button>
+                        <button
+                          type="button"
+                          className="sb-chip-x"
+                          title="Remove model"
+                          onClick={() => updateState((p) => ({ ...p, customModels: (p.customModels || []).filter((x) => x.id !== m.id) }))}
+                        >
+                          &times;
+                        </button>
+                      </span>
+                    );
+                  })}
+                </div>
 
-            <h3 className="sb-sub-title">Parsed Benchmark Comparisons ({records.length})</h3>
-            <div className="sb-inline-row">
-              <button
-                type="button"
-                className="btn btn-outline"
-                onClick={async () => {
-                  const nonSample = records.filter((r) => !r.isSample);
-                  const next = [...nonSample, ...SAMPLE_RESULTS_DATASET];
-                  setState((prev) => ({ ...prev, results: { includeSampleData: true, loadedRecords: next } }));
-                  await saveSnapshotIDB("latest_results", next);
-                }}
-              >
-                Load Sample Dataset (DGX vs R9700)
-              </button>
-              <label className="btn btn-outline" style={{ cursor: "pointer" }}>
-                Load .md / .json Files
-                <input type="file" multiple accept=".md,.json,.csv" className="hidden" onChange={(e) => handleResultFiles(e.target.files)} />
-              </label>
-              <button type="button" className="btn btn-outline" onClick={() => updateUi({ showCharts: !state.ui.showCharts })}>
-                {state.ui.showCharts ? "Hide Charts" : "Show Charts"}
-              </button>
-              <button type="button" className="btn btn-outline" onClick={() => downloadFile("ai_benchmate_comparison.md", exportComparisonMarkdown(records), "text/markdown")}>Export .md</button>
-              <button type="button" className="btn btn-outline" onClick={() => downloadFile("ai_benchmate_comparison.csv", exportComparisonCsv(records), "text/csv")}>Export .csv</button>
-              {records.length > 0 && (
                 <button
                   type="button"
-                  className="btn btn-danger"
-                  onClick={async () => {
-                    setState((prev) => ({ ...prev, results: { includeSampleData: false, loadedRecords: [] } }));
-                    await saveSnapshotIDB("latest_results", []);
+                  className="btn btn-sm btn-outline"
+                  style={{ marginLeft: "auto" }}
+                  onClick={() => updateState((p) => ({ ...p, ui: { ...p.ui, showPathsAndNaming: !p.ui.showPathsAndNaming } }))}
+                >
+                  Paths &amp; Naming {state.ui.showPathsAndNaming ? "▴" : "▾"}
+                </button>
+              </div>
+
+              <div className="config-model-row">
+                <label className="sb-field-inline" style={{ flex: 1, minWidth: "260px" }}>
+                  Model (.gguf)
+                  <input
+                    type="text"
+                    className="sb-input sb-input-wide"
+                    value={state.model.fullPath}
+                    onChange={(e) => {
+                      const val = e.target.value;
+                      const parsed = parseModelPath(val);
+                      updateState((p) => ({
+                        ...p,
+                        model: {
+                          ...p.model,
+                          fullPath: val,
+                          baseDir: parsed.baseDir,
+                          filename: parsed.filename,
+                          alias: parsed.alias,
+                          slug: parsed.slug,
+                          tokenizer: parsed.tokenizer,
+                          weightGb: parsed.weightGb,
+                          paramsB: parsed.paramsB
+                        }
+                      }));
+                    }}
+                  />
+                </label>
+                <button
+                  type="button"
+                  className="btn btn-sm btn-outline"
+                  onClick={() => {
+                    const parsed = parseModelPath(state.model.fullPath);
+                    const alias = state.model.alias || parsed.alias;
+                    const slug = state.model.slug || parsed.slug;
+                    const entry = {
+                      id: "custom-" + Date.now(),
+                      label: alias,
+                      alias,
+                      slug,
+                      tokenizer: state.model.tokenizer || parsed.tokenizer,
+                      weightGb: Number(state.model.weightGb) || parsed.weightGb,
+                      paramsB: Number(state.model.paramsB) || parsed.paramsB,
+                      fullPath: state.model.fullPath
+                    };
+                    updateState((p) => ({
+                      ...p,
+                      customModels: [...(p.customModels || []).filter((m) => m.slug !== slug && m.alias !== alias), entry]
+                    }));
                   }}
                 >
-                  Clear
+                  + Add Model
                 </button>
+              </div>
+
+              {state.ui.showPathsAndNaming && (
+                <div className="sb-drawer">
+                  <div className="sb-form-grid">
+                    <div className="sb-field">
+                      <label>Llama Bin Dir</label>
+                      <input type="text" className="sb-input" value={state.hardware.binDir} onChange={(e) => updateState((p) => ({ ...p, hardware: { ...p.hardware, binDir: e.target.value } }))} />
+                    </div>
+                    <div className="sb-field">
+                      <label>Repo Dir</label>
+                      <input type="text" className="sb-input" value={state.hardware.repoDir} onChange={(e) => updateState((p) => ({ ...p, hardware: { ...p.hardware, repoDir: e.target.value } }))} />
+                    </div>
+                    <div className="sb-field">
+                      <label>Bench Root</label>
+                      <input type="text" className="sb-input" value={state.hardware.benchRoot} onChange={(e) => updateState((p) => ({ ...p, hardware: { ...p.hardware, benchRoot: e.target.value } }))} />
+                    </div>
+                    <div className="sb-field">
+                      <label>Results Dir</label>
+                      <input type="text" className="sb-input" value={state.hardware.resultsDir} onChange={(e) => updateState((p) => ({ ...p, hardware: { ...p.hardware, resultsDir: e.target.value } }))} />
+                    </div>
+                    <div className="sb-field">
+                      <label>Model Alias</label>
+                      <input type="text" className="sb-input" value={state.model.alias} onChange={(e) => updateState((p) => ({ ...p, model: { ...p.model, alias: e.target.value } }))} />
+                    </div>
+                    <div className="sb-field">
+                      <label>Output Slug</label>
+                      <input type="text" className="sb-input" value={state.model.slug} onChange={(e) => updateState((p) => ({ ...p, model: { ...p.model, slug: e.target.value } }))} />
+                    </div>
+                    <div className="sb-field">
+                      <label>Tokenizer ID</label>
+                      <input type="text" className="sb-input" value={state.model.tokenizer} onChange={(e) => updateState((p) => ({ ...p, model: { ...p.model, tokenizer: e.target.value } }))} />
+                    </div>
+                    <div className="sb-field">
+                      <label>Weight (GB)</label>
+                      <input type="number" step="0.1" className="sb-input" value={state.model.weightGb} onChange={(e) => updateState((p) => ({ ...p, model: { ...p.model, weightGb: Number(e.target.value) || 0 } }))} />
+                    </div>
+                    <div className="sb-field">
+                      <label>Params (B)</label>
+                      <input type="number" step="0.5" className="sb-input" value={state.model.paramsB} onChange={(e) => updateState((p) => ({ ...p, model: { ...p.model, paramsB: Number(e.target.value) || 0 } }))} />
+                    </div>
+                    <div className="sb-field">
+                      <label>Server Host</label>
+                      <input type="text" className="sb-input" value={state.hardware.host} onChange={(e) => updateState((p) => ({ ...p, hardware: { ...p.hardware, host: e.target.value } }))} />
+                    </div>
+                    <div className="sb-field">
+                      <label>Server Port</label>
+                      <input type="number" className="sb-input" value={state.hardware.port} onChange={(e) => updateState((p) => ({ ...p, hardware: { ...p.hardware, port: Number(e.target.value) || 8080 } }))} />
+                    </div>
+                    <div className="sb-field">
+                      <label>Client --model Flag</label>
+                      <select className="sb-select" value={state.model.clientModelMode} onChange={(e) => updateState((p) => ({ ...p, model: { ...p.model, clientModelMode: e.target.value } }))}>
+                        <option value="alias">Alias (--alias)</option>
+                        <option value="fullPath">Full GGUF Path</option>
+                      </select>
+                    </div>
+                    <div className="sb-field">
+                      <label>Filename Naming</label>
+                      <select className="sb-select" value={state.naming.mode} onChange={(e) => updateState((p) => ({ ...p, naming: { ...p.naming, mode: e.target.value } }))}>
+                        <option value="auto">Auto (Classic on Default, Stamped on Edit)</option>
+                        <option value="stamped">Always Stamped (_c32k_fp16)</option>
+                        <option value="classic">Always Classic</option>
+                      </select>
+                    </div>
+                    {profile.supportsMultiGpu && (
+                      <>
+                        <div className="sb-field">
+                          <label>Device (-dev)</label>
+                          <input type="text" className="sb-input" value={state.hardware.nvidiaDevice || ""} onChange={(e) => updateState((p) => ({ ...p, hardware: { ...p.hardware, nvidiaDevice: e.target.value } }))} />
+                        </div>
+                        <div className="sb-field">
+                          <label>Tensor Split (-ts)</label>
+                          <input type="text" className="sb-input" placeholder="e.g. 1,1" value={state.hardware.tensorSplit || ""} onChange={(e) => updateState((p) => ({ ...p, hardware: { ...p.hardware, tensorSplit: e.target.value } }))} />
+                        </div>
+                      </>
+                    )}
+                  </div>
+
+                  <div className="sb-inline-row" style={{ marginTop: "12px", paddingTop: "10px", borderTop: "1px solid var(--border-soft)" }}>
+                    <input
+                      type="text"
+                      className="sb-input"
+                      placeholder="Save current parameters as preset..."
+                      style={{ minWidth: "220px" }}
+                      value={presetDraft}
+                      onChange={(e) => setPresetDraft(e.target.value)}
+                    />
+                    <button
+                      type="button"
+                      className="btn btn-sm btn-outline"
+                      onClick={() => {
+                        const name = presetDraft.trim() || `Preset ${(state.customPresets || []).length + 1}`;
+                        updateState((p) => ({
+                          ...p,
+                          naming: { ...p.naming, activePresetName: name },
+                          customPresets: [
+                            ...(p.customPresets || []).filter((x) => x.name !== name),
+                            { name, suites: JSON.parse(JSON.stringify(p.suites)) }
+                          ]
+                        }));
+                        setPresetDraft("");
+                      }}
+                    >
+                      + Save Preset
+                    </button>
+                    {(state.customPresets || []).map((preset) => (
+                      <span key={preset.name} className="sb-chip-group">
+                        <button
+                          type="button"
+                          className={`sb-chip ${state.naming.activePresetName === preset.name ? "active" : ""}`}
+                          onClick={() =>
+                            updateState((p) => ({
+                              ...p,
+                              suites: JSON.parse(JSON.stringify(preset.suites)),
+                              naming: { ...p.naming, activePresetName: preset.name }
+                            }))
+                          }
+                        >
+                          {preset.name}
+                        </button>
+                        <button
+                          type="button"
+                          className="sb-chip-x"
+                          title="Delete preset"
+                          onClick={() =>
+                            updateState((p) => ({
+                              ...p,
+                              customPresets: (p.customPresets || []).filter((x) => x.name !== preset.name),
+                              naming: {
+                                ...p.naming,
+                                activePresetName: p.naming.activePresetName === preset.name ? "Baseline Parity Defaults" : p.naming.activePresetName
+                              }
+                            }))
+                          }
+                        >
+                          &times;
+                        </button>
+                      </span>
+                    ))}
+                    <button
+                      type="button"
+                      className="btn btn-sm btn-danger"
+                      onClick={() =>
+                        updateState((p) => ({
+                          ...p,
+                          suites: JSON.parse(JSON.stringify(PARITY_DEFAULTS)),
+                          naming: { ...p.naming, activePresetName: "Baseline Parity Defaults" }
+                        }))
+                      }
+                    >
+                      Reset Parity Defaults
+                    </button>
+                  </div>
+                </div>
               )}
             </div>
 
-            {state.ui.showCharts && (
-              <div className="sb-chart-grid">
-                <SvgBarChart title="Decode (tg128) & Prefill (/10)" subtitle="Native llama-bench throughput" items={benchBars} unit="t/s" />
-                <SvgBarChart title="Depth 4096 KV Degradation (%)" subtitle="Lower is better KV stability" items={depthBars} unit="% drop" />
-                <SvgBarChart title="4-Stream Parallel Throughput" subtitle="llmperf concurrent output" items={concBars} unit="t/s" />
-              </div>
-            )}
-
-            <div className="sb-table-wrap">
-              <table className="sb-table">
-                <thead><tr><th>Source File</th><th>GPU / Backend</th><th>Model</th><th>Suite</th><th>Metrics</th></tr></thead>
-                <tbody>
-                  {records.length ? records.map((r) => (
-                    <tr key={r.id}>
-                      <td className="mono small">{r.sourceFile}</td>
-                      <td>{r.gpuLabel}</td>
-                      <td>{r.modelLabel}</td>
-                      <td><span className="sb-badge">{r.suiteType}</span></td>
-                      <td className="mono small">{Object.entries(r.metrics || {}).map(([k, v]) => `${k}=${v}`).join(" · ")}</td>
-                    </tr>
-                  )) : (
-                    <tr><td colSpan={5} className="muted">No result files loaded. Click "Load Sample Dataset" or upload .md/.json files above.</td></tr>
-                  )}
-                </tbody>
-              </table>
-            </div>
-          </>
-        )}
-
-        {state.ui.activeTab === "remote" && (
-          <>
-            <h2 className="sb-section-title">SSH Remote, Hermes Stack & Platform Setup Fixes</h2>
-            <div className="sb-form-grid" style={{ marginBottom: "14px" }}>
-              <div className="sb-field"><label>SSH User</label><input type="text" className="sb-input mono" value={state.ssh.user} onChange={(e) => setState((p) => ({ ...p, ssh: { ...p.ssh, user: e.target.value } }))} /></div>
-              <div className="sb-field"><label>Remote Host / IP</label><input type="text" className="sb-input mono" value={state.ssh.host} onChange={(e) => setState((p) => ({ ...p, ssh: { ...p.ssh, host: e.target.value } }))} /></div>
-              <div className="sb-field"><label>Port / tmux Session</label>
-                <div className="sb-inline-row" style={{ gap: "6px", flexWrap: "nowrap" }}>
-                  <input type="number" className="sb-input mono" style={{ width: "72px" }} value={state.ssh.port} onChange={(e) => setState((p) => ({ ...p, ssh: { ...p.ssh, port: Number(e.target.value) || 22 } }))} />
-                  <input type="text" className="sb-input mono" style={{ flex: 1, minWidth: "80px" }} value={state.ssh.tmuxSession} onChange={(e) => setState((p) => ({ ...p, ssh: { ...p.ssh, tmuxSession: e.target.value } }))} />
-                </div>
-              </div>
-              <div className="sb-field"><label>Remote Results Dir</label><input type="text" className="sb-input mono" value={state.ssh.remoteResultsDir} onChange={(e) => setState((p) => ({ ...p, ssh: { ...p.ssh, remoteResultsDir: e.target.value } }))} /></div>
-              <div className="sb-field"><label>Local Pull Folder</label><input type="text" className="sb-input mono" value={state.ssh.localPullDir} onChange={(e) => setState((p) => ({ ...p, ssh: { ...p.ssh, localPullDir: e.target.value } }))} /></div>
-              <div className="sb-field"><label>Hermes LAN IP</label><input type="text" className="sb-input mono" value={state.ssh.hermesServerIp} onChange={(e) => setState((p) => ({ ...p, ssh: { ...p.ssh, hermesServerIp: e.target.value } }))} /></div>
-            </div>
-
-            <div className="sb-inline-row" style={{ justifyContent: "space-between", marginBottom: "10px" }}>
-              <div className="sb-pill-row">
-                {remoteSections.map((sec) => (
-                  <button
-                    key={sec.id}
-                    type="button"
-                    className={`sb-chip ${activeRemote.id === sec.id ? "active" : ""}`}
-                    onClick={() => updateUi({ remoteSection: sec.id })}
-                  >
-                    {sec.label}
-                  </button>
+            {warnings.length > 0 && (
+              <div>
+                {warnings.map((w) => (
+                  <div key={w.id} className={`sb-banner ${w.severity === "crimson" ? "sb-banner-danger" : "sb-banner-warn"}`}>
+                    <span>
+                      <strong>{w.title}</strong> — {w.detail}
+                    </span>
+                    <button type="button" className="btn btn-sm btn-outline" onClick={() => handleAutoFix(w.id)}>
+                      {w.fixLabel}
+                    </button>
+                  </div>
                 ))}
               </div>
-              <label className="suite-check-label">
-                <input
-                  type="checkbox"
-                  checked={state.ssh.includeVllmInStartAi}
-                  onChange={(e) => setState((p) => ({ ...p, ssh: { ...p.ssh, includeVllmInStartAi: e.target.checked } }))}
-                />
-                <span>Include vLLM ({state.ssh.vllmGpuUtil})</span>
-              </label>
+            )}
+
+            <div className="suite-list">
+              {SUITE_METADATA.map((meta) => {
+                const modified = isSuiteCustomized(state, meta.id);
+                const target = getOutputTarget(state, meta.id);
+                const expanded = Boolean(state.ui.expandedDrawers[meta.id]);
+                const serverCmd = meta.hasServer ? buildServerCommand(state, meta.id) : "";
+                const clientCmd = buildSuiteClientCommand(state, meta.id);
+
+                return (
+                  <div key={meta.id} className="suite-card">
+                    <div className="suite-card-header">
+                      <div className="suite-card-title">
+                        <span className="suite-card-num">{meta.index}</span>
+                        <span>{meta.title}</span>
+                        <code className="suite-output-tag">-&gt; {target.leaf}</code>
+                        {modified && <span className="sb-badge sb-badge-warn">Modified</span>}
+                      </div>
+                      <div className="suite-card-actions">
+                        <button
+                          type="button"
+                          className="btn btn-sm"
+                          onClick={() =>
+                            updateState((p) => ({
+                              ...p,
+                              ui: {
+                                ...p.ui,
+                                expandedDrawers: { ...p.ui.expandedDrawers, [meta.id]: !p.ui.expandedDrawers[meta.id] }
+                              }
+                            }))
+                          }
+                        >
+                          Parameters {expanded ? "▴" : "▾"}
+                        </button>
+                        {modified && (
+                          <button
+                            type="button"
+                            className="btn btn-sm btn-danger"
+                            onClick={() =>
+                              updateState((p) => ({
+                                ...p,
+                                suites: { ...p.suites, [meta.id]: JSON.parse(JSON.stringify(PARITY_DEFAULTS[meta.id])) }
+                              }))
+                            }
+                          >
+                            Reset
+                          </button>
+                        )}
+                        {meta.hasServer && (
+                          <button
+                            type="button"
+                            className={`btn btn-sm btn-outline ${copiedKey === `srv-${meta.id}` ? "copied" : ""}`}
+                            onClick={() => copyCommand(serverCmd, `srv-${meta.id}`)}
+                          >
+                            {copiedKey === `srv-${meta.id}` ? "Copied" : "Copy Server"}
+                          </button>
+                        )}
+                        <button
+                          type="button"
+                          className={`btn btn-sm btn-primary ${copiedKey === `cli-${meta.id}` ? "copied" : ""}`}
+                          onClick={() => copyCommand(clientCmd, `cli-${meta.id}`)}
+                        >
+                          {copiedKey === `cli-${meta.id}` ? "Copied" : "Copy Command"}
+                        </button>
+                      </div>
+                    </div>
+
+                    {expanded && (
+                      <div className="sb-drawer">
+                        <div className="sb-form-grid">{renderSuiteDrawerFields(meta.id)}</div>
+                      </div>
+                    )}
+
+                    <div className="suite-terminals-stack">
+                      {meta.hasServer && (
+                        <div className="sb-terminal-wrap">
+                          <div className="sb-terminal-bar">
+                            <span>Terminal 1 — Server</span>
+                            <button
+                              type="button"
+                              className={`btn btn-sm ${copiedKey === `t1-${meta.id}` ? "copied" : ""}`}
+                              onClick={() => copyCommand(serverCmd, `t1-${meta.id}`)}
+                            >
+                              {copiedKey === `t1-${meta.id}` ? "Copied" : "Copy"}
+                            </button>
+                          </div>
+                          <HighlightedPre code={serverCmd} />
+                        </div>
+                      )}
+                      <div className="sb-terminal-wrap">
+                        <div className="sb-terminal-bar">
+                          <span>{meta.hasServer ? "Terminal 2 — Client" : "Command"}</span>
+                          <button
+                            type="button"
+                            className={`btn btn-sm ${copiedKey === `t2-${meta.id}` ? "copied" : ""}`}
+                            onClick={() => copyCommand(clientCmd, `t2-${meta.id}`)}
+                          >
+                            {copiedKey === `t2-${meta.id}` ? "Copied" : "Copy"}
+                          </button>
+                        </div>
+                        <HighlightedPre code={clientCmd} />
+                      </div>
+                    </div>
+                  </div>
+                );
+              })}
             </div>
 
-            <TerminalBox titleLeft={activeRemote.label} code={activeRemote.code} />
+            <div className="playbook-footer">
+              <span className="playbook-footer-title">
+                Full Playbook ({profile.shortName} · {state.model.alias || state.model.slug})
+              </span>
+              <div className="playbook-footer-actions">
+                <button
+                  type="button"
+                  className={`btn btn-sm btn-outline ${copiedKey === "playbook" ? "copied" : ""}`}
+                  onClick={() => copyCommand(buildAllInOnePlaybook(state, false), "playbook")}
+                >
+                  {copiedKey === "playbook" ? "Copied" : "Copy Playbook"}
+                </button>
+                <button
+                  type="button"
+                  className="btn btn-sm btn-primary"
+                  onClick={() => {
+                    const ext = profile.shell === "powershell" ? "ps1" : "sh";
+                    downloadText(`benchmate_${state.model.slug || "run"}.${ext}`, buildAllInOnePlaybook(state, false));
+                  }}
+                >
+                  Download {profile.shell === "powershell" ? ".ps1" : ".sh"}
+                </button>
+              </div>
+            </div>
+          </>
+        )}
+
+        {tab === "results" && (
+          <>
+            <div className="config-section">
+              <div className="sb-inline-row">
+                <h2 className="sb-section-title" style={{ margin: 0 }}>
+                  Results Folder Audit
+                </h2>
+                <label className="btn btn-sm btn-primary" style={{ cursor: "pointer" }}>
+                  Select Folder
+                  <input type="file" webkitdirectory="" directory="" multiple style={{ display: "none" }} onChange={(e) => handleFileListAudit(e.target.files)} />
+                </label>
+                <label className="btn btn-sm btn-outline" style={{ cursor: "pointer" }}>
+                  Select Files
+                  <input type="file" multiple accept=".md,.json,.log" style={{ display: "none" }} onChange={(e) => handleFileListAudit(e.target.files)} />
+                </label>
+                {state.audit.lastFolderName && <span className="sb-badge">{state.audit.lastFolderName}</span>}
+                {Object.keys(state.audit.items || {}).length > 0 && (
+                  <button
+                    type="button"
+                    className="btn btn-sm btn-danger"
+                    onClick={() => updateState((p) => ({ ...p, audit: { lastFolderName: "", lastAuditedAt: "", items: {} } }))}
+                  >
+                    Clear Audit
+                  </button>
+                )}
+              </div>
+
+              <div
+                className={`sb-dropzone ${dragOver ? "dragover" : ""}`}
+                onDragOver={(e) => {
+                  e.preventDefault();
+                  setDragOver(true);
+                }}
+                onDragLeave={() => setDragOver(false)}
+                onDrop={handleDropAudit}
+              >
+                Drop a benchmark results folder or .md / .json / .log files here
+              </div>
+
+              <div className="sb-table-wrap">
+                <table className="sb-table">
+                  <thead>
+                    <tr>
+                      <th>Suite</th>
+                      <th>Target Output</th>
+                      <th>Status</th>
+                      <th>Audit Detail</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {SUITE_METADATA.map((meta) => {
+                      const target = getOutputTarget(state, meta.id);
+                      const item = (state.audit.items || {})[meta.id];
+                      const badgeCls = !item
+                        ? ""
+                        : item.status === "verified"
+                          ? "sb-badge-ok"
+                          : item.status === "partial"
+                            ? "sb-badge-warn"
+                            : item.status === "stub"
+                              ? "sb-badge-danger"
+                              : "";
+                      return (
+                        <tr key={meta.id}>
+                          <td>
+                            <strong>
+                              {meta.index} {meta.title}
+                            </strong>
+                          </td>
+                          <td>
+                            <code>{target.leaf}</code>
+                          </td>
+                          <td>
+                            <span className={`sb-badge ${badgeCls}`}>{item ? item.label : "NOT AUDITED"}</span>
+                          </td>
+                          <td>{item ? item.detail : `Expected: ${target.leaf}`}</td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+
+              <div className="sb-terminal-wrap">
+                <div className="sb-terminal-bar">
+                  <span>Deep Audit Script (1 KB Stub Verification)</span>
+                  <button
+                    type="button"
+                    className={`btn btn-sm ${copiedKey === "deep-audit" ? "copied" : ""}`}
+                    onClick={() => copyCommand(buildDeepAuditScript(state), "deep-audit")}
+                  >
+                    {copiedKey === "deep-audit" ? "Copied" : "Copy"}
+                  </button>
+                </div>
+                <HighlightedPre code={buildDeepAuditScript(state)} />
+              </div>
+            </div>
+
+            <div>
+              <div className="sb-inline-row">
+                <h2 className="sb-section-title" style={{ margin: 0 }}>
+                  Comparison Matrix
+                </h2>
+                <button
+                  type="button"
+                  className={`btn btn-sm ${state.results.includeSampleData ? "btn-primary" : "btn-outline"}`}
+                  onClick={() =>
+                    updateState((p) => ({
+                      ...p,
+                      results: { ...p.results, includeSampleData: !p.results.includeSampleData }
+                    }))
+                  }
+                >
+                  {state.results.includeSampleData ? "Hide Sample (DGX vs R9700)" : "Load Sample (DGX vs R9700)"}
+                </button>
+                <label className="btn btn-sm btn-outline" style={{ cursor: "pointer" }}>
+                  Upload .md / .json
+                  <input type="file" multiple accept=".md,.json" style={{ display: "none" }} onChange={(e) => handleCompareUpload(e.target.files)} />
+                </label>
+                <button
+                  type="button"
+                  className="btn btn-sm"
+                  onClick={() => updateState((p) => ({ ...p, ui: { ...p.ui, showCharts: !p.ui.showCharts } }))}
+                >
+                  {state.ui.showCharts ? "Hide Charts" : "Show Charts"}
+                </button>
+                <button type="button" className="btn btn-sm" onClick={() => downloadText("ai_benchmate_comparison.md", exportComparisonMarkdown(activeRecords))}>
+                  Export .md
+                </button>
+                <button type="button" className="btn btn-sm" onClick={() => downloadText("ai_benchmate_comparison.csv", exportComparisonCsv(activeRecords))}>
+                  Export .csv
+                </button>
+                {(state.results.loadedRecords || []).length > 0 && (
+                  <button
+                    type="button"
+                    className="btn btn-sm btn-danger"
+                    onClick={() => updateState((p) => ({ ...p, results: { ...p.results, loadedRecords: [] } }))}
+                  >
+                    Clear Uploaded
+                  </button>
+                )}
+              </div>
+
+              {state.ui.showCharts && activeRecords.length > 0 && (
+                <div className="sb-chart-grid">
+                  <SvgBarCard
+                    title="llama-bench Decode tg128 (tok/s)"
+                    unit=" t/s"
+                    rows={activeRecords
+                      .filter((r) => r.suiteType === "llama_bench" && r.metrics?.tg128)
+                      .map((r) => ({
+                        label: `${r.gpuLabel.split(" ")[0]} · ${r.modelLabel.split(" ")[0]}`,
+                        gpuLabel: r.gpuLabel,
+                        value: r.metrics.tg128
+                      }))}
+                  />
+                  <SvgBarCard
+                    title="SPEED-Bench Overall Decode (tok/s)"
+                    unit=" t/s"
+                    rows={activeRecords
+                      .filter((r) => r.suiteType === "speed_bench" && r.metrics?.overall)
+                      .map((r) => ({
+                        label: `${r.gpuLabel.split(" ")[0]} · ${r.modelLabel.split(" ")[0]}`,
+                        gpuLabel: r.gpuLabel,
+                        value: r.metrics.overall
+                      }))}
+                  />
+                </div>
+              )}
+
+              <div className="sb-table-wrap">
+                <table className="sb-table">
+                  <thead>
+                    <tr>
+                      <th>Suite</th>
+                      <th>GPU / Backend</th>
+                      <th>Model</th>
+                      <th>Metrics</th>
+                      <th>Source</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {activeRecords.length > 0 ? (
+                      activeRecords.map((r) => (
+                        <tr key={r.id}>
+                          <td>
+                            <code>{r.suiteType}</code>
+                          </td>
+                          <td>{r.gpuLabel}</td>
+                          <td>{r.modelLabel}</td>
+                          <td>
+                            <code>
+                              {Object.entries(r.metrics || {})
+                                .map(([k, v]) => `${k}: ${v}`)
+                                .join(" · ")}
+                            </code>
+                          </td>
+                          <td>{r.sourceFile}</td>
+                        </tr>
+                      ))
+                    ) : (
+                      <tr>
+                        <td colSpan={5} style={{ textAlign: "center", color: "var(--text-muted)" }}>
+                          Load .md/.json output files or toggle the DGX vs R9700 sample dataset.
+                        </td>
+                      </tr>
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </>
+        )}
+
+        {tab === "ssh" && (
+          <>
+            <div className="config-section">
+              <div className="sb-form-grid">
+                {[
+                  { field: "user", label: "SSH User", type: "text" },
+                  { field: "host", label: "SSH Host / IP", type: "text" },
+                  { field: "port", label: "SSH Port", type: "number" },
+                  { field: "tmuxSession", label: "tmux Session", type: "text" },
+                  { field: "remoteResultsDir", label: "Remote Results Dir", type: "text" },
+                  { field: "localPullDir", label: "Local Pull Dir", type: "text" },
+                  { field: "hermesServerIp", label: "Hermes Server IP", type: "text" }
+                ].map((f) => (
+                  <div key={f.field} className="sb-field">
+                    <label>{f.label}</label>
+                    <input
+                      type={f.type}
+                      className="sb-input"
+                      value={state.ssh[f.field]}
+                      onChange={(e) =>
+                        updateState((p) => ({
+                          ...p,
+                          ssh: { ...p.ssh, [f.field]: f.type === "number" ? Number(e.target.value) || 0 : e.target.value }
+                        }))
+                      }
+                    />
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            <div className="ssh-stack">
+              {sshCards.map((c) => (
+                <div key={c.id} className="sb-terminal-wrap">
+                  <div className="sb-terminal-bar">
+                    <span>{c.title}</span>
+                    <button
+                      type="button"
+                      className={`btn btn-sm ${copiedKey === `ssh-${c.id}` ? "copied" : ""}`}
+                      onClick={() => copyCommand(c.cmd, `ssh-${c.id}`)}
+                    >
+                      {copiedKey === `ssh-${c.id}` ? "Copied" : "Copy"}
+                    </button>
+                  </div>
+                  <HighlightedPre code={c.cmd} />
+                </div>
+              ))}
+            </div>
           </>
         )}
       </main>
