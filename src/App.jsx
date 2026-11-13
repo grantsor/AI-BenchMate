@@ -3,23 +3,20 @@ import {
   HARDWARE_PROFILES,
   PARITY_DEFAULTS,
   QUICK_MODELS,
-  REFERENCE_PARITY_GUIDE,
   SAMPLE_RESULTS_DATASET,
   SUITE_METADATA
 } from "./core/benchmate-data.js";
 import {
   auditFileList,
-  buildAllInOnePlaybook,
   buildDeepAuditScript,
-  buildServerCommand,
+  buildSelectedSuitesPreview,
   buildSetupCards,
   buildSshCommands,
-  buildSuiteClientCommand,
+  computeModelFitRows,
   evaluateGuardrails,
   exportComparisonCsv,
   exportComparisonMarkdown,
   getOutputTarget,
-  isSuiteCustomized,
   joinPath,
   loadSnapshotIDB,
   loadState,
@@ -46,16 +43,13 @@ function renderHighlightedLine(line, idx) {
       </div>
     );
   }
-  // Tokenize quoted strings, flags, and keywords safely in React JSX
   const tokenRe = /("[^"]*"|'[^']*'|`[^`]*`|\s--?[a-zA-Z0-9_-]+|^--?[a-zA-Z0-9_-]+|\S+)/g;
   const parts = [];
   let lastIndex = 0;
   let match;
   let k = 0;
   while ((match = tokenRe.exec(line)) !== null) {
-    if (match.index > lastIndex) {
-      parts.push(line.slice(lastIndex, match.index));
-    }
+    if (match.index > lastIndex) parts.push(line.slice(lastIndex, match.index));
     const raw = match[0];
     const clean = raw.trim();
     if ((clean.startsWith('"') && clean.endsWith('"')) || (clean.startsWith("'") && clean.endsWith("'"))) {
@@ -69,16 +63,15 @@ function renderHighlightedLine(line, idx) {
     }
     lastIndex = tokenRe.lastIndex;
   }
-  if (lastIndex < line.length) {
-    parts.push(line.slice(lastIndex));
-  }
+  if (lastIndex < line.length) parts.push(line.slice(lastIndex));
   return <div key={idx}>{parts.length ? parts : " "}</div>;
 }
 
-function CopyButton({ text, label = "Copy", className = "btn", style }) {
+function CopyButton({ text, label = "Copy", className = "btn", onClickExtra }) {
   const [copied, setCopied] = useState(false);
 
   const onCopy = async () => {
+    if (onClickExtra) onClickExtra();
     try {
       await navigator.clipboard.writeText(text);
     } catch {
@@ -96,21 +89,21 @@ function CopyButton({ text, label = "Copy", className = "btn", style }) {
   };
 
   return (
-    <button type="button" className={`${className} ${copied ? "copied" : ""}`} style={style} onClick={onCopy}>
+    <button type="button" className={`${className} ${copied ? "copied" : ""}`} onClick={onCopy}>
       {copied ? "Copied!" : label}
     </button>
   );
 }
 
-function TerminalBox({ titleLeft, titleRight, code, rightAction }) {
+function TerminalBox({ titleLeft, code }) {
   const lines = useMemo(() => String(code || "").split("\n"), [code]);
   return (
-    <div className="terminal-box">
-      <div className="terminal-header">
+    <div className="sb-terminal-wrap">
+      <div className="sb-terminal-bar">
         <span>{titleLeft}</span>
-        {rightAction ? rightAction : <span>{titleRight}</span>}
+        <CopyButton text={code} label="Copy" className="btn btn-sm btn-outline" />
       </div>
-      <pre className="terminal-pre">{lines.map((l, i) => renderHighlightedLine(l, i))}</pre>
+      <pre className="sb-terminal-pre">{lines.map((l, i) => renderHighlightedLine(l, i))}</pre>
     </div>
   );
 }
@@ -118,35 +111,33 @@ function TerminalBox({ titleLeft, titleRight, code, rightAction }) {
 function SvgBarChart({ title, subtitle, items, unit }) {
   if (!items.length) {
     return (
-      <div className="chart-card">
+      <div className="sb-chart-card">
         <h4 style={{ margin: 0 }}>{title}</h4>
-        <p className="small muted">{subtitle}</p>
+        <div className="small muted">{subtitle}</div>
         <div className="small muted">No matching parsed files loaded yet.</div>
       </div>
     );
   }
   const maxVal = Math.max(...items.map((i) => i.value), 1);
-  const rowH = 34;
-  const svgH = items.length * rowH + 24;
+  const rowH = 30;
+  const svgH = items.length * rowH + 20;
   return (
-    <div className="chart-card">
-      <div>
-        <h4 style={{ margin: 0, fontSize: "14px" }}>{title}</h4>
-        <div className="small muted">{subtitle}</div>
-      </div>
-      <svg className="chart-svg" viewBox={`0 0 560 ${svgH}`}>
+    <div className="sb-chart-card">
+      <h4 style={{ margin: 0, fontSize: "13.5px" }}>{title}</h4>
+      <div className="small muted">{subtitle}</div>
+      <svg className="sb-chart-svg" viewBox={`0 0 560 ${svgH}`}>
         {items.map((item, idx) => {
-          const y = idx * rowH + 12;
+          const y = idx * rowH + 10;
           const barW = Math.max(4, Math.round((item.value / maxVal) * 280));
-          const color = item.color || "var(--accent-primary)";
+          const color = item.color || "var(--accent)";
           return (
             <g key={idx}>
-              <text x="4" y={y + 14} fill="var(--text-secondary)" fontSize="11" fontFamily="var(--font-mono)">
-                {item.label.slice(0, 28)}
+              <text x="4" y={y + 13} fill="var(--text-secondary)" fontSize="11" fontFamily="var(--font-mono)">
+                {item.label.slice(0, 26)}
               </text>
-              <rect x="210" y={y + 2} width="280" height="16" rx="4" fill="var(--chart-grid)" />
-              <rect x="210" y={y + 2} width={barW} height="16" rx="4" fill={color} />
-              <text x={218 + barW} y={y + 14} fill="var(--text-primary)" fontSize="11" fontWeight="700" fontFamily="var(--font-mono)">
+              <rect x="205" y={y + 2} width="280" height="14" rx="4" fill="var(--chart-grid)" />
+              <rect x="205" y={y + 2} width={barW} height="14" rx="4" fill={color} />
+              <text x={213 + barW} y={y + 13} fill="var(--text-primary)" fontSize="11" fontWeight="700" fontFamily="var(--font-mono)">
                 {item.value} {unit}
               </text>
             </g>
@@ -171,18 +162,13 @@ function downloadFile(filename, content, mime = "text/plain;charset=utf-8") {
 
 export default function App() {
   const [state, setState] = useState(() => loadState());
-  const [displayTargetName, setDisplayTargetName] = useState(
-    () => HARDWARE_PROFILES[loadState().hardware.profileId]?.shortName || "DGX Spark ARM64"
-  );
+  const [, setRefreshTick] = useState(0);
   const [dragOverAudit, setDragOverAudit] = useState(false);
-  const [dragOverResults, setDragOverResults] = useState(false);
 
-  // Universal auto-persistence on EVERY configurable change
   useEffect(() => {
     saveState(state);
   }, [state]);
 
-  // Restore large IndexedDB audit/result snapshots on startup if needed
   useEffect(() => {
     (async () => {
       const [savedAudit, savedResults] = await Promise.all([
@@ -202,112 +188,74 @@ export default function App() {
     })();
   }, []);
 
-  // Apply Dark/Light/System theme & Option 2A Unified Pause Animations / Benchmark Stealth Mode
   useEffect(() => {
     const html = document.documentElement;
-    let resolved = state.ui.theme;
+    let resolved = state.ui.theme || "light";
     if (resolved === "system") {
-      resolved = window.matchMedia && window.matchMedia("(prefers-color-scheme: light)").matches ? "light" : "dark";
+      resolved = window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
     }
     html.setAttribute("data-theme", resolved);
     html.setAttribute("data-light-terminal", state.ui.lightTerminal ? "true" : "false");
     html.classList.toggle("pause-animations", Boolean(state.ui.pauseAnimations));
   }, [state.ui.theme, state.ui.lightTerminal, state.ui.pauseAnimations]);
 
-  // Subtle scramble-decode effect when switching hardware profiles (respects Pause Animations)
   const profile = HARDWARE_PROFILES[state.hardware.profileId];
-  useEffect(() => {
-    const target = profile.shortName;
-    if (state.ui.pauseAnimations) {
-      setDisplayTargetName(target);
-      return;
-    }
-    const chars = "ABCDEFGHJKLMNPQRSTUVWXYZ0123456789";
-    let frame = 0;
-    const total = 10;
-    const timer = setInterval(() => {
-      frame += 1;
-      if (frame >= total) {
-        clearInterval(timer);
-        setDisplayTargetName(target);
-        return;
-      }
-      const reveal = Math.floor((frame / total) * target.length);
-      let out = "";
-      for (let i = 0; i < target.length; i++) {
-        out += i < reveal || target[i] === " " ? target[i] : chars[Math.floor(Math.random() * chars.length)];
-      }
-      setDisplayTargetName(out);
-    }, 22);
-    return () => clearInterval(timer);
-  }, [profile.shortName, state.ui.pauseAnimations]);
-
-  const resolvedTheme =
-    state.ui.theme === "system"
-      ? window.matchMedia && window.matchMedia("(prefers-color-scheme: light)").matches
-        ? "light"
-        : "dark"
-      : state.ui.theme;
+  const vramGb = Number(state.hardware.vramGb) || profile.defaultVramGb;
+  const budgetGib = (vramGb * 0.9).toFixed(1);
+  const poolType = profile.os === "linux" ? "unified" : "discrete";
 
   const guardrails = useMemo(() => evaluateGuardrails(state), [state]);
-  const verifiedCount = useMemo(
-    () => Object.values(state.audit.items || {}).filter((i) => i && i.status === "verified").length,
-    [state.audit.items]
-  );
-  const completedCount = useMemo(
-    () => Object.values(state.completedSteps || {}).filter(Boolean).length,
-    [state.completedSteps]
-  );
+  const fitRows = useMemo(() => computeModelFitRows(state), [state]);
+  const runPreviewCode = useMemo(() => buildSelectedSuitesPreview(state), [state]);
 
   const updateUi = (patch) => setState((prev) => ({ ...prev, ui: { ...prev.ui, ...patch } }));
   const updateHardware = (patch) => setState((prev) => ({ ...prev, hardware: { ...prev.hardware, ...patch } }));
   const updateModel = (patch) => setState((prev) => ({ ...prev, model: { ...prev.model, ...patch } }));
-  const updateSuite = (suiteId, patch) =>
+  const updateSuiteField = (suiteId, field, value) =>
     setState((prev) => ({
       ...prev,
-      suites: { ...prev.suites, [suiteId]: { ...prev.suites[suiteId], ...patch } }
+      suites: { ...prev.suites, [suiteId]: { ...prev.suites[suiteId], [field]: value } }
     }));
-  const updateSsh = (patch) => setState((prev) => ({ ...prev, ssh: { ...prev.ssh, ...patch } }));
 
   const switchHardwareProfile = (newProfileId) => {
-    const prevProfile = HARDWARE_PROFILES[state.hardware.profileId];
-    const nextProfile = HARDWARE_PROFILES[newProfileId];
-    if (!nextProfile) return;
-
-    const sep = nextProfile.os === "windows" ? "\\" : "/";
-    const filenameOnly = (state.model.filename || "Qwen3.8-27B-UD-Q4_K_M.gguf").split(/[\\/]+/).pop();
-    const matchQuick = QUICK_MODELS.find((m) => m.alias === state.model.alias);
-    let nextPath = state.model.fullPath;
-    if (matchQuick) {
-      const rel = nextProfile.os === "windows" ? matchQuick.relativeWin : matchQuick.relativeLinux;
-      nextPath = joinPath(nextProfile.defaultModelsDir, rel, sep);
-    } else if (prevProfile.os !== nextProfile.os) {
-      nextPath = joinPath(nextProfile.defaultModelsDir, filenameOnly, sep);
-    }
-    const parsed = parseModelPath(nextPath);
-
-    setState((prev) => ({
-      ...prev,
-      hardware: {
-        ...prev.hardware,
-        profileId: nextProfile.id,
-        vramGb: nextProfile.defaultVramGb,
-        binDir: nextProfile.defaultBinDir,
-        repoDir: nextProfile.defaultRepoDir,
-        benchRoot: nextProfile.defaultBenchRoot,
-        resultsDir: nextProfile.defaultResultsDir,
-        nvidiaDevice: nextProfile.deviceFlag || prev.hardware.nvidiaDevice
-      },
-      model: {
-        ...prev.model,
-        fullPath: nextPath,
-        baseDir: parsed.baseDir,
-        filename: parsed.filename
+    const nextP = HARDWARE_PROFILES[newProfileId];
+    if (!nextP) return;
+    setState((prev) => {
+      const prevP = HARDWARE_PROFILES[prev.hardware.profileId];
+      const sep = nextP.os === "windows" ? "\\" : "/";
+      const matchQuick = QUICK_MODELS.find((m) => m.alias === prev.model.alias);
+      let nextFullPath = prev.model.fullPath;
+      if (matchQuick) {
+        const rel = nextP.os === "windows" ? matchQuick.relativeWin : matchQuick.relativeLinux;
+        nextFullPath = joinPath(nextP.defaultModelsDir, rel, sep);
+      } else if (prevP.os !== nextP.os) {
+        const fileOnly = (prev.model.filename || "model.gguf").split(/[\\/]+/).pop();
+        nextFullPath = joinPath(nextP.defaultModelsDir, fileOnly, sep);
       }
-    }));
+      const parsed = parseModelPath(nextFullPath);
+      return {
+        ...prev,
+        hardware: {
+          ...prev.hardware,
+          profileId: nextP.id,
+          vramGb: nextP.defaultVramGb,
+          binDir: nextP.defaultBinDir,
+          repoDir: nextP.defaultRepoDir,
+          benchRoot: nextP.defaultBenchRoot,
+          resultsDir: nextP.defaultResultsDir,
+          nvidiaDevice: nextP.deviceFlag || prev.hardware.nvidiaDevice
+        },
+        model: {
+          ...prev.model,
+          fullPath: nextFullPath,
+          baseDir: parsed.baseDir,
+          filename: parsed.filename
+        }
+      };
+    });
   };
 
-  const applyQuickModel = (qm) => {
+  const selectQuickModel = (qm) => {
     const sep = profile.os === "windows" ? "\\" : "/";
     const rel = profile.os === "windows" ? qm.relativeWin : qm.relativeLinux;
     updateModel({
@@ -322,21 +270,37 @@ export default function App() {
     });
   };
 
+  const selectModelById = (modelId) => {
+    const quick = QUICK_MODELS.find((m) => m.id === modelId);
+    if (quick) {
+      selectQuickModel(quick);
+      return;
+    }
+    if (modelId.startsWith("custom_")) {
+      const idx = parseInt(modelId.replace("custom_", ""), 10);
+      const cm = (state.customModels || [])[idx];
+      if (cm) updateModel(cm);
+    }
+  };
+
   const applyGuardrailFix = (fixId) => {
-    if (fixId === "ctx_aiperf_sweep") {
-      updateSuite("aiperf_sweep", { c: 70000, ctk: "q8_0", ctv: "q8_0" });
-    } else if (fixId === "ctx_benchy") {
-      updateSuite("llama_benchy", { c: 70000 });
-    } else if (fixId === "vram_overflow") {
-      const nextKv = guardrails.vramEstimate.kvPrecision === "fp16" ? "q8_0" : "q4_0";
-      setState((prev) => {
+    setState((prev) => {
+      if (fixId === "ctx_aiperf_sweep") {
+        return { ...prev, suites: { ...prev.suites, aiperf_sweep: { ...prev.suites.aiperf_sweep, c: 70000, ctk: "q8_0", ctv: "q8_0" } } };
+      }
+      if (fixId === "ctx_benchy") {
+        return { ...prev, suites: { ...prev.suites, llama_benchy: { ...prev.suites.llama_benchy, c: 70000 } } };
+      }
+      if (fixId === "vram_overflow") {
+        const nextKv = guardrails.vramEstimate.kvPrecision === "fp16" ? "q8_0" : "q4_0";
         const nextSuites = { ...prev.suites };
         ["llama_benchy", "llmperf", "speed_bench", "agentperf", "aiperf_std", "aiperf_sweep"].forEach((sid) => {
           nextSuites[sid] = { ...nextSuites[sid], ctk: nextKv, ctv: nextKv };
         });
         return { ...prev, suites: nextSuites };
-      });
-    }
+      }
+      return prev;
+    });
   };
 
   const runAuditEntries = async (entries, folderName) => {
@@ -346,1381 +310,734 @@ export default function App() {
     await saveSnapshotIDB("latest_audit", nextAudit);
   };
 
+  const handleAuditDrop = async (e) => {
+    e.preventDefault();
+    setDragOverAudit(false);
+    const dtItems = Array.from(e.dataTransfer.items || []);
+    const entries = [];
+    async function readEntry(entry, prefix) {
+      if (entry.isFile) {
+        await new Promise((res) => entry.file((file) => {
+          entries.push({ path: prefix + entry.name, name: entry.name, size: file.size, textLoader: () => file.text() });
+          res();
+        }));
+      } else if (entry.isDirectory) {
+        const reader = entry.createReader();
+        await new Promise((res) => {
+          const all = [];
+          const batch = () => reader.readEntries(async (list) => {
+            if (!list.length) {
+              for (const c of all) await readEntry(c, prefix + entry.name + "/");
+              res();
+            } else {
+              all.push(...list);
+              batch();
+            }
+          });
+          batch();
+        });
+      }
+    }
+    for (const it of dtItems) {
+      const entry = it.webkitGetAsEntry ? it.webkitGetAsEntry() : null;
+      if (entry) await readEntry(entry, "");
+    }
+    if (!entries.length && e.dataTransfer.files) {
+      Array.from(e.dataTransfer.files).forEach((f) => entries.push({ path: f.name, name: f.name, size: f.size, textLoader: () => f.text() }));
+    }
+    if (entries.length) await runAuditEntries(entries, "Dropped Folder");
+  };
+
   const handleResultFiles = async (fileList) => {
     const parsed = [];
     for (const f of Array.from(fileList || [])) {
-      const txt = await f.text();
-      const rec = parseResultFile(f.name, txt);
+      const rec = parseResultFile(f.name, await f.text());
       if (rec) parsed.push(rec);
     }
     if (parsed.length) {
-      setState((prev) => {
-        const nextRecs = [...(prev.results.loadedRecords || []), ...parsed];
-        saveSnapshotIDB("latest_results", nextRecs);
-        return { ...prev, results: { ...prev.results, loadedRecords: nextRecs } };
-      });
+      const nextRecords = [...(state.results.loadedRecords || []), ...parsed];
+      setState((prev) => ({ ...prev, results: { ...prev.results, loadedRecords: nextRecords } }));
+      await saveSnapshotIDB("latest_results", nextRecords);
     }
   };
 
-  const tabs = [
-    { id: "builder", idx: "01", label: "Builder" },
-    { id: "coverage", idx: "02", label: "Coverage Matrix" },
-    { id: "results", idx: "03", label: "Results & Charts" },
-    { id: "ssh", idx: "04", label: "SSH Remote" },
-    { id: "setup", idx: "05", label: "Setup & Fixes" }
-  ];
+  // Derived lists for Run / Results / Remote
+  const auditItems = state.audit.items || {};
+  const verifiedCount = Object.values(auditItems).filter((i) => i && i.status === "verified").length;
+  const outstandingSuitesText = SUITE_METADATA
+    .filter((m) => !(auditItems[m.id] && auditItems[m.id].status === "verified"))
+    .map((m) => m.shortLabel || m.id)
+    .join(", ") || "all verified";
 
-  const railSections = [
-    { id: "sec-hardware", num: "01", label: "Hardware & OS", tab: "builder" },
-    { id: "sec-model", num: "02", label: "Model & Paths", tab: "builder" },
-    { id: "sec-presets", num: "03", label: "Server & Presets", tab: "builder" },
-    { id: "sec-suites", num: "04", label: "Benchmark Suites", tab: "builder" },
-    { id: "sec-playbook", num: "05", label: "Playbook Output", tab: "builder" },
-    { id: "sec-verify", num: "06", label: "Folder Verification", tab: "coverage" }
-  ];
+  const suiteOrder = ["agentperf", "aiperf_std", "aiperf_sweep", "llama_bench", "llama_benchy", "llmperf", "speed_bench"];
+  const metaMap = useMemo(() => {
+    const m = {};
+    SUITE_METADATA.forEach((x) => { m[x.id] = x; });
+    return m;
+  }, []);
+
+  const modelOptions = useMemo(() => {
+    const arr = QUICK_MODELS.map((m) => ({ id: m.id, label: `${m.alias} (${m.quant || "Q4_K_M"})`, alias: m.alias }));
+    (state.customModels || []).forEach((cm, idx) => arr.push({ id: `custom_${idx}`, label: `${cm.alias} (Custom)`, alias: cm.alias }));
+    return arr;
+  }, [state.customModels]);
+  const activeModelMatch = modelOptions.find((o) => o.alias === state.model.alias);
+
+  const remoteSections = useMemo(() => {
+    const cmds = buildSshCommands(state);
+    const items = [
+      { id: "ssh_ps", label: "SSH PowerShell", code: cmds.psTrigger },
+      { id: "ssh_tmux", label: "tmux Split", code: cmds.tmuxLaunch },
+      { id: "ssh_scp", label: "SCP Pull Results", code: cmds.scpPull },
+      { id: "ssh_vram", label: "DGX VRAM Sweep", code: cmds.vramSweep },
+      { id: "ssh_startai", label: "Restore start-ai", code: cmds.startAiRestore },
+      { id: "ssh_hermes", label: "Hermes YAML", code: cmds.hermesYaml },
+      { id: "audit_deep", label: "Deep Audit Script", code: buildDeepAuditScript(state) }
+    ];
+    buildSetupCards(state).forEach((c) => items.push({ id: c.id, label: c.badge, code: c.cmd }));
+    return items;
+  }, [state]);
+  const activeRemote = remoteSections.find((r) => r.id === state.ui.remoteSection) || remoteSections[0];
+
+  const baseTiers = useMemo(() => {
+    const arr = [16, 24, 32, 48, 64, 96, 128];
+    if (!arr.includes(vramGb)) arr.push(vramGb);
+    return arr.sort((a, b) => a - b);
+  }, [vramGb]);
 
   const records = state.results.loadedRecords || [];
   const benchBars = [];
-  records.filter((r) => r.suiteType === "llama_bench").forEach((r) => {
-    const color = r.gpuLabel.includes("DGX") ? "var(--accent-emerald)" : "var(--accent-primary)";
-    if (r.metrics.tg128) benchBars.push({ label: `${r.gpuLabel.split(" ")[0]} ${r.modelLabel.split(" ")[0]} tg128`, value: r.metrics.tg128, color });
-    if (r.metrics.pp512) benchBars.push({ label: `${r.gpuLabel.split(" ")[0]} ${r.modelLabel.split(" ")[0]} pp512/10`, value: Math.round(r.metrics.pp512 / 10), color: "var(--accent-amber)" });
-  });
-  const depthBars = records.filter((r) => r.suiteType === "llama_benchy").map((r) => ({
-    label: `${r.gpuLabel.split(" ")[0]} ${r.modelLabel.split(" ")[0]} Drop`,
-    value: r.metrics.degradationPct || 0,
-    color: "var(--accent-crimson)"
-  }));
-  const concBars = records.filter((r) => r.suiteType === "llmperf").map((r) => ({
-    label: `${r.gpuLabel.split(" ")[0]} ${r.modelLabel.split(" ")[0]} Total`,
-    value: r.metrics.totalTps || 0,
-    color: "var(--accent-primary)"
-  }));
-  const sbBars = records.filter((r) => r.suiteType === "speed_bench").map((r) => ({
-    label: `${r.gpuLabel.split(" ")[0]} Overall`,
-    value: r.metrics.overall || 0,
-    color: "var(--accent-emerald)"
-  }));
-  const sweepRecs = records.filter((r) => r.suiteType === "aiperf_sweep");
-  const sshCmds = useMemo(() => buildSshCommands(state), [state]);
-  const setupCards = useMemo(() => buildSetupCards(state), [state]);
-  const playbookCode = useMemo(() => buildAllInOnePlaybook(state, state.ui.showMissingOnly), [state]);
+  const depthBars = [];
+  const concBars = [];
+  if (state.ui.showCharts) {
+    records.filter((r) => r.suiteType === "llama_bench").forEach((r) => {
+      if (r.metrics.tg128) benchBars.push({ label: `${r.gpuLabel.split(" ")[0]} ${r.modelLabel.split(" ")[0]} tg128`, value: r.metrics.tg128, color: "var(--accent)" });
+      if (r.metrics.pp512) benchBars.push({ label: `${r.gpuLabel.split(" ")[0]} ${r.modelLabel.split(" ")[0]} pp/10`, value: Math.round(r.metrics.pp512 / 10), color: "var(--ok)" });
+    });
+    records.filter((r) => r.suiteType === "llama_benchy").forEach((r) => {
+      depthBars.push({ label: `${r.gpuLabel.split(" ")[0]} ${r.modelLabel.split(" ")[0]}`, value: r.metrics.degradationPct || 0, color: "var(--warn)" });
+    });
+    records.filter((r) => r.suiteType === "llmperf").forEach((r) => {
+      concBars.push({ label: `${r.gpuLabel.split(" ")[0]} ${r.modelLabel.split(" ")[0]}`, value: r.metrics.totalTps || 0, color: "var(--accent)" });
+    });
+  }
+
+  const tabs = [
+    { id: "system", label: "System" },
+    { id: "models", label: "Models" },
+    { id: "run", label: "Run" },
+    { id: "results", label: "Results" },
+    { id: "remote", label: "Remote & Setup" }
+  ];
+
+  const selectedSuites = state.ui.selectedRunSuites || [];
 
   return (
-    <>
-      <header className="top-island-wrap">
-        <nav className="top-island-nav">
-          <div className="brand-cluster">
-            <div className="brand-mark">BM</div>
-            <div className="brand-title">
-              <span>AI Benchmate</span>
-              <span className="edition-badge">REACT + VITE</span>
-            </div>
-            <div className="telemetry-pills">
-              <span className="telemetry-pill">
-                <span className="dot-pulse" />
-                Target: <strong>{displayTargetName}</strong>
-              </span>
-              <span className="telemetry-pill">
-                Model: <strong>{state.model.alias}</strong>
-              </span>
-              <span className="telemetry-pill">
-                Audit: <strong>{verifiedCount}/{SUITE_METADATA.length} Verified</strong>
-              </span>
-            </div>
-          </div>
+    <div className="sb-container">
+      <header className="sb-header">
+        <div className="sb-brand-cluster">
+          <span className="sb-brand">ai-benchmate</span>
+          <span className="sb-version">1.0.0</span>
+          <span className="sb-pill">platform: <strong>{profile.id}</strong></span>
+          <span className="sb-pill">memory: <strong>{poolType} {vramGb} GiB</strong></span>
+          <span className="sb-pill">binding: <strong>system_usable {budgetGib} GiB</strong></span>
+          <span className="sb-pill sb-pill-quiet">localhost only · publishes nothing</span>
+        </div>
 
-          <div className="nav-tabs">
-            {tabs.map((t) => (
-              <button
-                key={t.id}
-                type="button"
-                className={`nav-tab-btn ${state.ui.activeTab === t.id ? "active" : ""}`}
-                onClick={() => updateUi({ activeTab: t.id })}
-              >
-                <span className="idx">{t.idx}</span>
-                <span>{t.label}</span>
-              </button>
-            ))}
-          </div>
-
-          <div className="nav-controls">
-            <button
-              type="button"
-              className={`control-pill ${state.ui.pauseAnimations ? "is-active" : ""}`}
-              onClick={() => updateUi({ pauseAnimations: !state.ui.pauseAnimations })}
-              title="Option 2A Benchmark Stealth Mode: Pauses motion, timers, backdrop blurs & GPU shadows"
-            >
-              {state.ui.pauseAnimations ? "● Stealth / Paused" : "❚❚ Pause Animations"}
-            </button>
-            {resolvedTheme === "light" && (
-              <button
-                type="button"
-                className={`control-pill ${state.ui.lightTerminal ? "is-active" : ""}`}
-                onClick={() => updateUi({ lightTerminal: !state.ui.lightTerminal })}
-              >
-                {state.ui.lightTerminal ? "Light Terminal" : "Dark Terminal"}
-              </button>
-            )}
-            <select
-              className="theme-select"
-              value={state.ui.theme}
-              onChange={(e) => updateUi({ theme: e.target.value })}
-              aria-label="Theme Mode"
-            >
-              <option value="dark">Dark · Obsidian</option>
-              <option value="light">Light · Editorial</option>
-              <option value="system">System</option>
-            </select>
-          </div>
-        </nav>
-      </header>
-
-      <div className="app-shell">
-        <aside className="section-rail">
-          <div className="rail-heading">Section Index</div>
-          {railSections.map((s) => {
-            let pill = "";
-            let cls = "";
-            if (s.id === "sec-hardware") pill = profile.os.toUpperCase();
-            if (s.id === "sec-presets") {
-              pill = guardrails.warnings.length ? `${guardrails.warnings.length} WARN` : "OK";
-              cls = guardrails.warnings.length ? "err" : "ok";
-            }
-            if (s.id === "sec-suites") {
-              pill = `${completedCount}/7`;
-              cls = completedCount === 7 ? "ok" : "";
-            }
-            return (
-              <button
-                key={s.id}
-                type="button"
-                className={`rail-link ${state.ui.activeSection === s.id ? "active" : ""}`}
-                onClick={() => {
-                  updateUi({ activeSection: s.id, activeTab: s.tab });
-                  setTimeout(() => {
-                    const el = document.getElementById(s.id);
-                    if (el) el.scrollIntoView({ behavior: state.ui.pauseAnimations ? "auto" : "smooth" });
-                  }, 20);
-                }}
-              >
-                <span className="rail-link-left">
-                  <span className="rail-num">{s.num}</span>
-                  <span>{s.label}</span>
-                </span>
-                {pill && <span className={`rail-status ${cls}`}>{pill}</span>}
-              </button>
-            );
-          })}
-
-          <div className="rail-divider" />
-          <div className="rail-heading">Session State (Auto-Saved)</div>
-          <div className="rail-mini-meta">
-            <div className="rail-mini-row">
-              <span>VRAM Est.</span>
-              <strong
-                style={{
-                  color:
-                    guardrails.vramEstimate.totalVramGb > guardrails.vramEstimate.vramCeiling
-                      ? "var(--accent-amber)"
-                      : "var(--accent-emerald)"
-                }}
-              >
-                {guardrails.vramEstimate.totalVramGb} / {guardrails.vramEstimate.vramCeiling} GB
-              </strong>
-            </div>
-            <div className="rail-mini-row">
-              <span>Guardrails</span>
-              <strong style={{ color: guardrails.warnings.length ? "var(--accent-crimson)" : "var(--accent-emerald)" }}>
-                {guardrails.warnings.length ? `${guardrails.warnings.length} Alert(s)` : "Healthy"}
-              </strong>
-            </div>
-            <div className="rail-mini-row">
-              <span>Steps Done</span>
-              <strong>{completedCount}/7</strong>
-            </div>
-            <div className="rail-mini-row">
-              <span>Naming</span>
-              <strong>{state.naming.mode.toUpperCase()}</strong>
-            </div>
-          </div>
-
+        <div className="sb-header-controls">
           <button
             type="button"
-            className={`chip-btn ${state.ui.showMissingOnly ? "amber active" : ""}`}
-            style={{ justifyContent: "center", marginTop: "4px" }}
-            onClick={() => updateUi({ showMissingOnly: !state.ui.showMissingOnly })}
+            className={`sb-ctrl-btn ${state.ui.pauseAnimations ? "is-active" : ""}`}
+            onClick={() => updateUi({ pauseAnimations: !state.ui.pauseAnimations })}
+            title="Pause Animations & Benchmark Stealth Mode"
           >
-            {state.ui.showMissingOnly ? "✓ Showing Missing/Incomplete Only" : "Filter: Missing Runs Only"}
+            {state.ui.pauseAnimations ? "Stealth: ON" : "Pause Animations"}
           </button>
-        </aside>
+          <select className="sb-ctrl-select" aria-label="Theme" value={state.ui.theme} onChange={(e) => updateUi({ theme: e.target.value })}>
+            <option value="light">Light</option>
+            <option value="dark">Dark</option>
+            <option value="system">System</option>
+          </select>
+        </div>
+      </header>
 
-        <main className="main-content">
-          {state.ui.activeTab === "builder" && (
-            <>
-              <section className="panel-card section-block" id="sec-hardware">
-                <div className="card-header" style={{ marginBottom: "12px" }}>
-                  <div className="card-title-group">
-                    <div className="card-kicker">
-                      <span className="index-num">01</span>
-                      <span className="badge badge-cyan">HARDWARE & OS MATRIX</span>
-                    </div>
-                    <h2 className="card-title">Target Compute Profile & Tool Paths</h2>
-                    <p className="card-desc">
-                      Adapts shell syntax ({profile.shell}), binary names, GPU flags, venv activation, and cleanup commands automatically.
-                    </p>
-                  </div>
-                </div>
+      <nav className="folder-tabs" aria-label="Primary Tabs">
+        {tabs.map((t) => (
+          <button
+            key={t.id}
+            type="button"
+            className={`folder-tab ${state.ui.activeTab === t.id ? "active" : ""}`}
+            onClick={() => updateUi({ activeTab: t.id })}
+          >
+            {t.label}
+          </button>
+        ))}
+      </nav>
 
-                <div className="profile-grid" style={{ marginBottom: "14px" }}>
+      <main className="sb-card">
+        {state.ui.activeTab === "system" && (
+          <>
+            <h2 className="sb-section-title">System & Platform Configuration</h2>
+            <div className="sb-form-grid">
+              <div className="sb-field">
+                <label>Target Compute Profile</label>
+                <select className="sb-select" value={state.hardware.profileId} onChange={(e) => switchHardwareProfile(e.target.value)}>
                   {Object.values(HARDWARE_PROFILES).map((p) => (
-                    <button
-                      key={p.id}
-                      type="button"
-                      className={`profile-btn ${state.hardware.profileId === p.id ? "active" : ""}`}
-                      onClick={() => switchHardwareProfile(p.id)}
-                    >
-                      <div className="profile-btn-top">
-                        <span className="profile-name">{p.shortName}</span>
-                        <span className={`badge ${p.os === "linux" ? "badge-emerald" : "badge-cyan"}`}>{p.shell}</span>
-                      </div>
-                      <div className="profile-meta">{p.arch}</div>
-                      <div className="profile-meta">Default VRAM: {p.defaultVramGb} GB</div>
-                    </button>
+                    <option key={p.id} value={p.id}>{p.name} ({p.shell})</option>
                   ))}
+                </select>
+              </div>
+              <div className="sb-field">
+                <label>VRAM Capacity (GiB)</label>
+                <input type="number" className="sb-input mono" value={state.hardware.vramGb} min={4} max={512} onChange={(e) => updateHardware({ vramGb: Number(e.target.value) || 32 })} />
+              </div>
+              {state.hardware.profileId === "amd_win_x64" && (
+                <div className="sb-field">
+                  <label>AMD Compute Backend</label>
+                  <select className="sb-select" value={state.hardware.amdBackend} onChange={(e) => updateHardware({ amdBackend: e.target.value, binDir: e.target.value === "rocm" ? "C:\\llama.cpp\\hip" : "C:\\llama.cpp\\vulkan" })}>
+                    <option value="vulkan">Vulkan0 (Default)</option>
+                    <option value="rocm">ROCm / HIP0</option>
+                  </select>
                 </div>
-
-                <div className="form-grid" style={{ marginBottom: "12px" }}>
-                  <div className="field">
-                    <label>VRAM Capacity (GB)</label>
-                    <input
-                      type="number"
-                      value={state.hardware.vramGb}
-                      min="4"
-                      max="512"
-                      onChange={(e) => updateHardware({ vramGb: Number(e.target.value) || 32 })}
-                    />
-                    <div className="chip-row" style={{ marginTop: "4px" }}>
-                      {profile.vramChips.map((gb) => (
-                        <button
-                          key={gb}
-                          type="button"
-                          className={`chip-btn ${Number(state.hardware.vramGb) === gb ? "active" : ""}`}
-                          onClick={() => updateHardware({ vramGb: gb })}
-                        >
-                          {gb} GB
-                        </button>
-                      ))}
-                    </div>
+              )}
+              {profile.supportsMultiGpu && (
+                <>
+                  <div className="sb-field">
+                    <label>CUDA Device (--device)</label>
+                    <input type="text" className="sb-input mono" value={state.hardware.nvidiaDevice} onChange={(e) => updateHardware({ nvidiaDevice: e.target.value })} />
                   </div>
-
-                  {state.hardware.profileId === "amd_win_x64" && (
-                    <div className="field">
-                      <label>AMD Compute Backend</label>
-                      <div className="chip-row">
-                        <button
-                          type="button"
-                          className={`chip-btn ${state.hardware.amdBackend === "vulkan" ? "active" : ""}`}
-                          onClick={() => updateHardware({ amdBackend: "vulkan", binDir: "C:\\llama.cpp\\vulkan" })}
-                        >
-                          Vulkan0 (Default)
-                        </button>
-                        <button
-                          type="button"
-                          className={`chip-btn ${state.hardware.amdBackend === "rocm" ? "active" : ""}`}
-                          onClick={() => updateHardware({ amdBackend: "rocm", binDir: "C:\\llama.cpp\\hip" })}
-                        >
-                          ROCm / HIP0
-                        </button>
-                      </div>
-                      {state.hardware.amdBackend === "vulkan" && (
-                        <label style={{ marginTop: "6px", fontWeight: 500 }}>
-                          <span>
-                            <input
-                              type="checkbox"
-                              checked={state.hardware.amdEnableFa}
-                              onChange={(e) => updateHardware({ amdEnableFa: e.target.checked })}
-                            />{" "}
-                            Include <code>-fa 1</code> on Vulkan
-                          </span>
-                        </label>
-                      )}
-                    </div>
-                  )}
-
-                  {profile.supportsMultiGpu && (
-                    <>
-                      <div className="field">
-                        <label>CUDA Device (--device)</label>
-                        <input
-                          className="mono"
-                          value={state.hardware.nvidiaDevice}
-                          onChange={(e) => updateHardware({ nvidiaDevice: e.target.value })}
-                        />
-                      </div>
-                      <div className="field">
-                        <label>Multi-GPU Tensor Split (Optional)</label>
-                        <input
-                          className="mono"
-                          value={state.hardware.tensorSplit}
-                          placeholder="e.g. 0.5,0.5"
-                          onChange={(e) => updateHardware({ tensorSplit: e.target.value })}
-                        />
-                      </div>
-                    </>
-                  )}
-
-                  {state.hardware.profileId === "dgx_spark_linux_arm64" && (
-                    <div className="field">
-                      <label>DGX Setup Mode</label>
-                      <label style={{ fontWeight: 500 }}>
-                        <input
-                          type="checkbox"
-                          checked={state.hardware.nonSudoSetup}
-                          onChange={(e) => updateHardware({ nonSudoSetup: e.target.checked })}
-                        />{" "}
-                        Non-sudo fallback (skip <code>apt install python3-dev</code>)
-                      </label>
-                    </div>
-                  )}
-
-                  {state.hardware.profileId === "rtx_spark_win_arm64" && (
-                    <div className="field">
-                      <label>ARM64 Optional Wheels</label>
-                      <label style={{ fontWeight: 500 }}>
-                        <input
-                          type="checkbox"
-                          checked={state.hardware.rtxArmTdigestCompile}
-                          onChange={(e) => updateHardware({ rtxArmTdigestCompile: e.target.checked })}
-                        />{" "}
-                        Compile <code>aiperf[tdigest]</code>
-                      </label>
-                    </div>
-                  )}
-
-                  <div className="field">
-                    <label>Server Host & Port</label>
-                    <div style={{ display: "flex", gap: "6px" }}>
-                      <input
-                        className="mono"
-                        value={state.hardware.host}
-                        onChange={(e) => updateHardware({ host: e.target.value })}
-                      />
-                      <input
-                        className="mono"
-                        type="number"
-                        value={state.hardware.port}
-                        style={{ maxWidth: "95px" }}
-                        onChange={(e) => updateHardware({ port: Number(e.target.value) || 8080 })}
-                      />
-                    </div>
+                  <div className="sb-field">
+                    <label>Multi-GPU Tensor Split (Optional)</label>
+                    <input type="text" className="sb-input mono" value={state.hardware.tensorSplit} placeholder="0.5,0.5" onChange={(e) => updateHardware({ tensorSplit: e.target.value })} />
                   </div>
+                </>
+              )}
+              <div className="sb-field">
+                <label>Server Host & Port</label>
+                <div className="sb-inline-row" style={{ gap: "6px", flexWrap: "nowrap" }}>
+                  <input type="text" className="sb-input mono" value={state.hardware.host} style={{ flex: 1, minWidth: "90px" }} onChange={(e) => updateHardware({ host: e.target.value })} />
+                  <input type="number" className="sb-input mono" value={state.hardware.port} style={{ width: "82px" }} onChange={(e) => updateHardware({ port: Number(e.target.value) || 8080 })} />
                 </div>
+              </div>
+              <div className="sb-field">
+                <label>Dynamic Result Naming</label>
+                <select className="sb-select" value={state.naming.mode} onChange={(e) => setState((prev) => ({ ...prev, naming: { ...prev.naming, mode: e.target.value } }))}>
+                  <option value="auto">Auto (Stamp on Customize)</option>
+                  <option value="stamped">Mode A · Parameter-Stamped</option>
+                  <option value="classic">Mode B · Classic Parity</option>
+                </select>
+              </div>
+              <div className="sb-field">
+                <label>Client --model Argument</label>
+                <select className="sb-select" value={state.model.clientModelMode} onChange={(e) => updateModel({ clientModelMode: e.target.value })}>
+                  <option value="alias">Served Alias (--alias)</option>
+                  <option value="fullpath">Full GGUF File Path</option>
+                </select>
+              </div>
+            </div>
 
-                <div className="form-grid-2">
-                  <div className="field">
-                    <label>llama.cpp Binaries Folder</label>
-                    <input className="mono" value={state.hardware.binDir} onChange={(e) => updateHardware({ binDir: e.target.value })} />
-                  </div>
-                  <div className="field">
-                    <label>Centralized Results Folder</label>
-                    <input className="mono" value={state.hardware.resultsDir} onChange={(e) => updateHardware({ resultsDir: e.target.value })} />
-                  </div>
-                  <div className="field">
-                    <label>Benchmarks Root (Venvs / llmperf)</label>
-                    <input className="mono" value={state.hardware.benchRoot} onChange={(e) => updateHardware({ benchRoot: e.target.value })} />
-                  </div>
-                  <div className="field">
-                    <label>llama.cpp Repo Root (for SPEED-Bench)</label>
-                    <input className="mono" value={state.hardware.repoDir} onChange={(e) => updateHardware({ repoDir: e.target.value })} />
-                  </div>
-                </div>
-              </section>
+            <h3 className="sb-sub-title">Directory Paths</h3>
+            <div className="sb-form-grid">
+              <div className="sb-field"><label>llama.cpp Binaries</label><input type="text" className="sb-input mono" value={state.hardware.binDir} onChange={(e) => updateHardware({ binDir: e.target.value })} /></div>
+              <div className="sb-field"><label>Centralized Results</label><input type="text" className="sb-input mono" value={state.hardware.resultsDir} onChange={(e) => updateHardware({ resultsDir: e.target.value })} /></div>
+              <div className="sb-field"><label>Benchmarks Root (Venvs)</label><input type="text" className="sb-input mono" value={state.hardware.benchRoot} onChange={(e) => updateHardware({ benchRoot: e.target.value })} /></div>
+              <div className="sb-field"><label>llama.cpp Repo Root</label><input type="text" className="sb-input mono" value={state.hardware.repoDir} onChange={(e) => updateHardware({ repoDir: e.target.value })} /></div>
+            </div>
 
-              <section className="panel-card section-block" id="sec-model">
-                <div className="card-header" style={{ marginBottom: "12px" }}>
-                  <div className="card-title-group">
-                    <div className="card-kicker">
-                      <span className="index-num">02</span>
-                      <span className="badge badge-cyan">SMART PATH PARSER & LIBRARY</span>
-                    </div>
-                    <h2 className="card-title">Paste Model Path — Auto-Fill Everything</h2>
-                    <p className="card-desc">
-                      Zero hardcoded usernames. Paste any Windows or Linux <code>.gguf</code> path to derive alias, slug, tokenizer ID & weight estimate.
-                    </p>
-                  </div>
-                  <button
-                    type="button"
-                    className="btn"
-                    onClick={() =>
-                      setState((prev) => ({
-                        ...prev,
-                        customModels: [...prev.customModels, { ...prev.model }]
-                      }))
-                    }
-                  >
-                    + Save Model to Library
-                  </button>
-                </div>
-
-                <div className="chip-row" style={{ marginBottom: "10px" }}>
-                  <span className="small muted" style={{ fontWeight: 600 }}>Quick Presets:</span>
-                  {QUICK_MODELS.map((qm) => (
-                    <button
-                      key={qm.id}
-                      type="button"
-                      className={`chip-btn ${state.model.alias === qm.alias ? "active" : ""}`}
-                      onClick={() => applyQuickModel(qm)}
-                    >
-                      {qm.label}
-                    </button>
-                  ))}
-                </div>
-
-                {state.customModels.length > 0 && (
-                  <div className="chip-row" style={{ marginBottom: "10px" }}>
-                    <span className="small muted" style={{ fontWeight: 600 }}>Saved Models:</span>
-                    {state.customModels.map((cm, idx) => (
-                      <span key={idx} className={`chip-btn ${state.model.fullPath === cm.fullPath ? "active" : ""}`}>
-                        <span style={{ cursor: "pointer" }} onClick={() => updateModel(cm)}>{cm.alias}</span>
-                        <span
-                          style={{ cursor: "pointer", opacity: 0.65, marginLeft: "4px" }}
-                          onClick={() =>
-                            setState((prev) => ({
-                              ...prev,
-                              customModels: prev.customModels.filter((_, i) => i !== idx)
-                            }))
-                          }
-                        >
-                          ×
-                        </span>
-                      </span>
-                    ))}
-                  </div>
+            <div className="sb-inline-row" style={{ marginTop: "16px", justifyContent: "space-between" }}>
+              <div className="sb-inline-row">
+                {state.hardware.profileId === "dgx_spark_linux_arm64" && (
+                  <label className="suite-check-label"><input type="checkbox" checked={state.hardware.nonSudoSetup} onChange={(e) => updateHardware({ nonSudoSetup: e.target.checked })} /> Non-sudo setup (skip apt python3-dev)</label>
                 )}
+                {state.hardware.profileId === "rtx_spark_win_arm64" && (
+                  <label className="suite-check-label"><input type="checkbox" checked={state.hardware.rtxArmTdigestCompile} onChange={(e) => updateHardware({ rtxArmTdigestCompile: e.target.checked })} /> Compile aiperf[tdigest] C extension</label>
+                )}
+                {state.hardware.profileId === "amd_win_x64" && state.hardware.amdBackend === "vulkan" && (
+                  <label className="suite-check-label"><input type="checkbox" checked={state.hardware.amdEnableFa} onChange={(e) => updateHardware({ amdEnableFa: e.target.checked })} /> Enable -fa 1 on Vulkan</label>
+                )}
+                <label className="suite-check-label"><input type="checkbox" checked={state.ui.lightTerminal} onChange={(e) => updateUi({ lightTerminal: e.target.checked })} /> Light Terminal (#F0EFEA)</label>
+              </div>
+              <button
+                type="button"
+                className="btn btn-outline"
+                onClick={() => setState((prev) => ({ ...prev, suites: JSON.parse(JSON.stringify(PARITY_DEFAULTS)), naming: { ...prev.naming, activePresetName: "Baseline Parity Defaults" } }))}
+              >
+                Reset Suites to Parity Defaults
+              </button>
+            </div>
+          </>
+        )}
 
-                <div className="field" style={{ marginBottom: "12px" }}>
-                  <label>
-                    <span>Full Model File Path (.gguf)</span>
-                    <span className="small muted">Paste full path to auto-extract fields below</span>
-                  </label>
-                  <input
-                    className="mono"
-                    value={state.model.fullPath}
-                    onChange={(e) => {
-                      const val = e.target.value;
-                      const parsed = parseModelPath(val);
-                      updateModel({
-                        fullPath: val,
-                        baseDir: parsed.baseDir,
-                        filename: parsed.filename,
-                        alias: parsed.alias,
-                        slug: parsed.slug,
-                        tokenizer: parsed.tokenizer,
-                        weightGb: parsed.weightGb,
-                        paramsB: parsed.paramsB
-                      });
-                    }}
-                  />
+        {state.ui.activeTab === "models" && (
+          <>
+            <h2 className="sb-section-title">What fits, and at what context</h2>
+            <div className="sb-inline-row">
+              <label className="sb-field-inline">
+                <span>Tier</span>
+                <select className="sb-select" value={vramGb} onChange={(e) => updateHardware({ vramGb: Number(e.target.value) || 64 })}>
+                  {baseTiers.map((t) => <option key={t} value={t}>{t}</option>)}
+                </select>
+              </label>
+              <label className="sb-field-inline">
+                <span>KV</span>
+                <select className="sb-select" value={state.ui.fitKv || "fp16"} onChange={(e) => updateUi({ fitKv: e.target.value })}>
+                  <option value="fp16">f16</option>
+                  <option value="q8_0">q8_0</option>
+                  <option value="q4_0">q4_0</option>
+                </select>
+              </label>
+              <button type="button" className="btn btn-outline" onClick={() => setRefreshTick((n) => n + 1)}>Refresh</button>
+              <span className="small muted">Every answer is a model and a context. A fit at 2K is not a usable result. Click a row to select.</span>
+            </div>
+
+            <div className="sb-table-wrap">
+              <table className="sb-table">
+                <thead>
+                  <tr>
+                    <th>Model</th>
+                    <th>Quant</th>
+                    <th>Kind</th>
+                    <th className="num">Best ctx</th>
+                    <th className="num">Total</th>
+                    <th className="num">Budget</th>
+                    <th className="num">Headroom</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {fitRows.map((r) => {
+                    const isSelected = state.model.alias === r.rawModel.alias;
+                    return (
+                      <tr key={r.id} className={isSelected ? "is-selected" : ""} onClick={() => selectModelById(r.id)} title={`Click to select ${r.modelLabel}`}>
+                        <td>{r.modelLabel}</td>
+                        <td className="mono">{r.quant}</td>
+                        <td className="mono">{r.kind}</td>
+                        <td className="num mono">{r.bestCtxLabel}</td>
+                        <td className="num mono">{r.totalGib.toFixed(2)}</td>
+                        <td className="num mono">{r.budgetGib.toFixed(1)}</td>
+                        <td className="num mono" style={!r.fits ? { color: "var(--danger)", fontWeight: 600 } : undefined}>{r.headroomGib.toFixed(2)}</td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+
+            <div className="sb-inline-row" style={{ marginTop: "14px" }}>
+              <span className="small muted" style={{ fontWeight: 600 }}>Custom .gguf:</span>
+              <input
+                type="text"
+                className="sb-input sb-input-wide mono"
+                value={state.model.fullPath}
+                placeholder="Paste full Windows or Linux .gguf path to auto-fill alias & slug"
+                onChange={(e) => {
+                  const p = parseModelPath(e.target.value);
+                  updateModel({ fullPath: e.target.value, baseDir: p.baseDir, filename: p.filename, alias: p.alias, slug: p.slug, tokenizer: p.tokenizer, weightGb: p.weightGb, paramsB: p.paramsB });
+                }}
+              />
+              <button
+                type="button"
+                className="btn btn-outline"
+                onClick={() => setState((prev) => ({
+                  ...prev,
+                  customModels: prev.customModels.some((m) => m.fullPath === prev.model.fullPath) ? prev.customModels : [...prev.customModels, { ...prev.model }]
+                }))}
+              >
+                + Save Model
+              </button>
+            </div>
+          </>
+        )}
+
+        {state.ui.activeTab === "run" && (
+          <>
+            <h2 className="sb-section-title">Run benchmarks</h2>
+            <div className="outstanding-box">
+              <div className="outstanding-heading">One click: the outstanding parity benchmarks.</div>
+              <div className="outstanding-list">
+                <div className={`outstanding-row ${state.model.slug === "qwen38" ? "is-active" : ""}`} onClick={() => selectModelById("qwen38_27b")}>
+                  <div className="outstanding-left"><strong>qwen38-27b</strong> · {outstandingSuitesText}</div>
+                  <div className="outstanding-right">AIPerf 64k/1k TTFT and E2E, plus Dense 27B parity suites</div>
                 </div>
-
-                <div className="form-grid">
-                  <div className="field">
-                    <label>Served Model Alias (--alias)</label>
-                    <input className="mono" value={state.model.alias} onChange={(e) => updateModel({ alias: e.target.value })} />
-                  </div>
-                  <div className="field">
-                    <label>Clean Output Slug</label>
-                    <input className="mono" value={state.model.slug} onChange={(e) => updateModel({ slug: e.target.value })} />
-                  </div>
-                  <div className="field">
-                    <label>HF Tokenizer ID</label>
-                    <input className="mono" value={state.model.tokenizer} onChange={(e) => updateModel({ tokenizer: e.target.value })} />
-                  </div>
-                  <div className="field">
-                    <label>Model Weight (GB) / Params (B)</label>
-                    <div style={{ display: "flex", gap: "6px" }}>
-                      <input
-                        className="mono"
-                        type="number"
-                        step="0.1"
-                        value={state.model.weightGb}
-                        onChange={(e) => updateModel({ weightGb: parseFloat(e.target.value) || 15.8 })}
-                      />
-                      <input
-                        className="mono"
-                        type="number"
-                        step="1"
-                        value={state.model.paramsB}
-                        style={{ maxWidth: "80px" }}
-                        onChange={(e) => updateModel({ paramsB: parseFloat(e.target.value) || 27 })}
-                      />
-                    </div>
-                  </div>
-                  <div className="field">
-                    <label>Client --model Argument</label>
-                    <div className="chip-row">
-                      <button
-                        type="button"
-                        className={`chip-btn ${state.model.clientModelMode === "alias" ? "active" : ""}`}
-                        onClick={() => updateModel({ clientModelMode: "alias" })}
-                      >
-                        Served Alias
-                      </button>
-                      <button
-                        type="button"
-                        className={`chip-btn ${state.model.clientModelMode === "fullpath" ? "active" : ""}`}
-                        onClick={() => updateModel({ clientModelMode: "fullpath" })}
-                      >
-                        Full Path
-                      </button>
-                    </div>
-                  </div>
+                <div className={`outstanding-row ${state.model.slug === "qwen36" ? "is-active" : ""}`} onClick={() => selectModelById("qwen36_35b_moe")}>
+                  <div className="outstanding-left"><strong>qwen36-35b-a3b</strong> · aiperf-64k, speed-bench, llama-bench, llama-benchy, llmperf</div>
+                  <div className="outstanding-right">AIPerf 64k/1k TTFT and E2E on the MoE model</div>
                 </div>
-              </section>
+              </div>
+            </div>
 
-              <section className="panel-card section-block" id="sec-presets">
-                <div className="card-header" style={{ marginBottom: "12px" }}>
-                  <div className="card-title-group">
-                    <div className="card-kicker">
-                      <span className="index-num">03</span>
-                      <span className="badge badge-amber">NAMING ENGINE, PRESETS & GUARDRAILS</span>
-                    </div>
-                    <h2 className="card-title">Dynamic Result Naming, Presets & Context/VRAM Safety</h2>
-                  </div>
-                  <div className="action-group">
-                    <button
-                      type="button"
-                      className="btn"
-                      onClick={() => {
-                        const name = window.prompt("Enter preset name:", `Custom ${state.model.slug} (${new Date().toLocaleDateString()})`);
-                        if (!name || !name.trim()) return;
-                        setState((prev) => ({
-                          ...prev,
-                          customPresets: [...prev.customPresets, { name: name.trim(), suites: JSON.parse(JSON.stringify(prev.suites)) }],
-                          naming: { ...prev.naming, activePresetName: name.trim() }
-                        }));
-                      }}
-                    >
-                      + Save Current Settings as Preset
-                    </button>
-                    <button
-                      type="button"
-                      className="btn btn-amber"
-                      onClick={() =>
-                        setState((prev) => ({
-                          ...prev,
-                          suites: JSON.parse(JSON.stringify(PARITY_DEFAULTS)),
-                          naming: { ...prev.naming, activePresetName: "Baseline Parity Defaults" }
-                        }))
-                      }
-                    >
-                      Reset All to Parity Defaults
-                    </button>
-                  </div>
-                </div>
+            <div className="sb-inline-row" style={{ marginBottom: "18px" }}>
+              <CopyButton
+                text={buildSelectedSuitesPreview({ ...state, ui: { ...state.ui, previewMode: "outstanding" } })}
+                label="Run everything outstanding"
+                className="btn btn-primary"
+                onClickExtra={() => updateUi({ previewMode: "outstanding" })}
+              />
+              <button type="button" className="btn btn-outline" onClick={() => updateUi({ previewMode: "prereqs" })}>Check prerequisites only</button>
+            </div>
 
-                <div className="form-grid-2" style={{ marginBottom: "14px" }}>
-                  <div className="field">
-                    <label>Dynamic Result Naming Mode</label>
-                    <div className="chip-row">
-                      {[
-                        { id: "auto", label: "Auto (Stamp on Customize)" },
-                        { id: "stamped", label: "Mode A · Parameter-Stamped", amber: true },
-                        { id: "classic", label: "Mode B · Classic Parity" }
-                      ].map((m) => (
-                        <button
-                          key={m.id}
-                          type="button"
-                          className={`chip-btn ${m.amber ? "amber" : ""} ${state.naming.mode === m.id ? "active" : ""}`}
-                          onClick={() => setState((prev) => ({ ...prev, naming: { ...prev.naming, mode: m.id } }))}
-                        >
-                          {m.label}
-                        </button>
-                      ))}
-                    </div>
-                  </div>
+            <h3 className="sb-sub-title">Or a single run</h3>
+            <div className="sb-inline-row" style={{ marginBottom: "10px" }}>
+              <label className="sb-field-inline">
+                <span>Model</span>
+                <select className="sb-select" value={activeModelMatch ? activeModelMatch.id : "__current__"} onChange={(e) => e.target.value !== "__current__" && selectModelById(e.target.value)}>
+                  {!activeModelMatch && <option value="__current__">{state.model.alias} (Custom Path)</option>}
+                  {modelOptions.map((o) => <option key={o.id} value={o.id}>{o.label}</option>)}
+                </select>
+              </label>
 
-                  <div className="field">
-                    <label>Saved Parameter Presets ({state.naming.activePresetName})</label>
-                    <div className="chip-row">
-                      <button
-                        type="button"
-                        className={`chip-btn ${state.naming.activePresetName === "Baseline Parity Defaults" ? "active" : ""}`}
-                        onClick={() =>
-                          setState((prev) => ({
-                            ...prev,
-                            suites: JSON.parse(JSON.stringify(PARITY_DEFAULTS)),
-                            naming: { ...prev.naming, activePresetName: "Baseline Parity Defaults" }
-                          }))
-                        }
-                      >
-                        Baseline Parity Defaults
-                      </button>
-                      {state.customPresets.map((cp, idx) => (
-                        <span key={idx} className={`chip-btn ${state.naming.activePresetName === cp.name ? "active" : ""}`}>
-                          <span
-                            style={{ cursor: "pointer" }}
-                            onClick={() =>
-                              setState((prev) => ({
-                                ...prev,
-                                suites: JSON.parse(JSON.stringify(cp.suites)),
-                                naming: { ...prev.naming, activePresetName: cp.name }
-                              }))
-                            }
-                          >
-                            {cp.name}
-                          </span>
-                          <span
-                            style={{ cursor: "pointer", opacity: 0.65, marginLeft: "4px" }}
-                            onClick={() =>
-                              setState((prev) => ({
-                                ...prev,
-                                customPresets: prev.customPresets.filter((_, i) => i !== idx)
-                              }))
-                            }
-                          >
-                            ×
-                          </span>
-                        </span>
-                      ))}
-                    </div>
-                  </div>
-                </div>
-
-                <div className="guardrail-stack">
-                  {guardrails.warnings.length === 0 ? (
-                    <div className="banner banner-emerald">
-                      <div className="banner-body">
-                        <div className="banner-title">Guardrails Healthy — Zero Context Overflow or VRAM Violations</div>
-                        <div className="small muted">
-                          Estimated peak VRAM: <strong>{guardrails.vramEstimate.totalVramGb} GB</strong> (Model{" "}
-                          {guardrails.vramEstimate.weightGb} GB + KV {guardrails.vramEstimate.kvGb} GB @{" "}
-                          {guardrails.vramEstimate.kvPrecision} + 1.5 GB Compute) within {guardrails.vramEstimate.vramCeiling} GB ceiling.
-                        </div>
-                      </div>
-                    </div>
-                  ) : (
-                    guardrails.warnings.map((w) => (
-                      <div key={w.id} className={`banner banner-${w.severity}`}>
-                        <div className="banner-body">
-                          <div className="banner-title">{w.title}</div>
-                          <div className="small">{w.detail}</div>
-                        </div>
-                        <button
-                          type="button"
-                          className={`btn ${w.severity === "crimson" ? "btn-crimson" : "btn-amber"}`}
-                          onClick={() => applyGuardrailFix(w.id)}
-                        >
-                          {w.fixLabel}
-                        </button>
-                      </div>
-                    ))
-                  )}
-                </div>
-              </section>
-
-              <section className="section-block" id="sec-suites" style={{ display: "flex", flexDirection: "column", gap: "14px" }}>
-                <div className="action-bar" style={{ padding: "0 2px" }}>
-                  <div>
-                    <span className="index-num">04</span>
-                    <strong style={{ marginLeft: "6px", fontSize: "15px" }}>
-                      Benchmark Suites ({state.ui.showMissingOnly ? "Filtered: Missing/Incomplete Only" : "All 6 Core Suites"})
-                    </strong>
-                  </div>
-                  <button
-                    type="button"
-                    className={`chip-btn ${state.ui.showMissingOnly ? "amber active" : ""}`}
-                    onClick={() => updateUi({ showMissingOnly: !state.ui.showMissingOnly })}
-                  >
-                    {state.ui.showMissingOnly
-                      ? "Showing Missing / Incomplete Only (Show All)"
-                      : "Generate Commands for Missing / Incomplete Runs Only"}
-                  </button>
-                </div>
-
-                {SUITE_METADATA.map((meta) => {
-                  const auditItem = (state.audit.items || {})[meta.id];
-                  if (state.ui.showMissingOnly && auditItem && auditItem.status === "verified") return null;
-
-                  const isDone = Boolean((state.completedSteps || {})[meta.id]);
-                  const isExpanded = Boolean((state.ui.expandedDrawers || {})[meta.id]);
-                  const isCustom = isSuiteCustomized(state, meta.id);
-                  const out = getOutputTarget(state, meta.id);
-                  const srvCmd = meta.hasServer ? buildServerCommand(state, meta.id) : "";
-                  const cliCmd = buildSuiteClientCommand(state, meta.id);
-                  const s = state.suites[meta.id];
-
+              <span className="sb-field-inline"><span>Suites</span></span>
+              <div className="suite-checks">
+                {suiteOrder.map((sid) => {
+                  const m = metaMap[sid];
+                  const checked = selectedSuites.includes(sid);
+                  const verified = auditItems[sid] && auditItems[sid].status === "verified";
                   return (
-                    <article key={meta.id} className={`suite-card ${isDone ? "is-complete" : ""}`}>
-                      <div className="card-header">
-                        <div className="card-title-group">
-                          <div className="card-kicker">
-                            <span className="index-num">{meta.index}</span>
-                            <span className={`badge ${meta.badgeClass}`}>{meta.category}</span>
-                            <span className="badge">{meta.duration}</span>
-                            {isCustom ? <span className="badge badge-amber">CUSTOMIZED</span> : <span className="badge">PARITY DEFAULT</span>}
-                            {auditItem ? (
-                              <span
-                                className={`badge ${
-                                  auditItem.status === "verified"
-                                    ? "badge-emerald"
-                                    : auditItem.status === "partial"
-                                    ? "badge-amber"
-                                    : auditItem.status === "stub"
-                                    ? "badge-crimson"
-                                    : ""
-                                }`}
-                              >
-                                {auditItem.status === "verified" ? "🟢 VERIFIED COMPLETE" : auditItem.status === "partial" ? "🟡 PARTIAL" : auditItem.status === "stub" ? "🔴 STUB / FAILED" : "⚪ NOT RUN"}
-                              </span>
-                            ) : (
-                              <span className="badge">⚪ NOT AUDITED</span>
-                            )}
-                          </div>
-                          <h3 className="card-title">{meta.title}</h3>
-                          <p className="card-desc">{meta.description}</p>
-                        </div>
-
-                        <div className="action-group">
-                          <button
-                            type="button"
-                            className="btn"
-                            onClick={() =>
-                              updateUi({
-                                expandedDrawers: { ...state.ui.expandedDrawers, [meta.id]: !isExpanded }
-                              })
-                            }
-                          >
-                            {isExpanded ? "Hide Parameters" : "Customize Parameters"}
-                          </button>
-                          {isCustom && (
-                            <button
-                              type="button"
-                              className="btn btn-amber"
-                              onClick={() => updateSuite(meta.id, JSON.parse(JSON.stringify(PARITY_DEFAULTS[meta.id])))}
-                            >
-                              Reset to Parity Default
-                            </button>
-                          )}
-                        </div>
-                      </div>
-
-                      <div className="output-preview-bar">
-                        <span className={`badge ${out.mode === "stamped" ? "badge-amber" : "badge-cyan"}`}>
-                          {out.mode === "stamped" ? "MODE A · STAMPED" : "MODE B · PARITY"}
-                        </span>
-                        <code>{out.fullPath}</code>
-                      </div>
-
-                      {isExpanded && (
-                        <div className="drawer-panel">
-                          {meta.id === "llama_bench" && (
-                            <div className="form-grid">
-                              <div className="field"><label>Prompt Tokens (-p)</label><input className="mono" value={s.p} onChange={(e) => updateSuite("llama_bench", { p: e.target.value })} /></div>
-                              <div className="field"><label>Gen Tokens (-n)</label><input className="mono" value={s.n} onChange={(e) => updateSuite("llama_bench", { n: e.target.value })} /></div>
-                              <div className="field"><label>Repetitions (-r)</label><input type="number" value={s.r} onChange={(e) => updateSuite("llama_bench", { r: Number(e.target.value) || 1 })} /></div>
-                              <div className="field"><label>GPU Layers (-ngl)</label><input type="number" value={s.ngl} onChange={(e) => updateSuite("llama_bench", { ngl: Number(e.target.value) || 0 })} /></div>
-                              <div className="field"><label>Batch (-b) / Micro (-ub)</label>
-                                <div style={{ display: "flex", gap: "6px" }}>
-                                  <input type="number" value={s.b} onChange={(e) => updateSuite("llama_bench", { b: Number(e.target.value) || 512 })} />
-                                  <input type="number" value={s.ub} onChange={(e) => updateSuite("llama_bench", { ub: Number(e.target.value) || 128 })} />
-                                </div>
-                              </div>
-                              <div className="field"><label>Flash Attn (-fa) / Output (-o)</label>
-                                <div style={{ display: "flex", gap: "6px" }}>
-                                  <select value={s.fa} onChange={(e) => updateSuite("llama_bench", { fa: e.target.value })}><option value="1">-fa 1</option><option value="0">-fa 0</option></select>
-                                  <select value={s.format} onChange={(e) => updateSuite("llama_bench", { format: e.target.value })}><option value="md">md</option><option value="csv">csv</option><option value="json">json</option></select>
-                                </div>
-                              </div>
-                            </div>
-                          )}
-
-                          {meta.id === "llama_benchy" && (
-                            <div className="form-grid">
-                              <div className="field"><label>Server Context (-c)</label><input type="number" value={s.c} onChange={(e) => updateSuite("llama_benchy", { c: Number(e.target.value) || 4096 })} /></div>
-                              <div className="field"><label>KV Cache (-ctk / -ctv)</label>
-                                <select value={s.ctk} onChange={(e) => updateSuite("llama_benchy", { ctk: e.target.value, ctv: e.target.value })}><option value="fp16">fp16 (Default)</option><option value="q8_0">q8_0 (Half VRAM)</option><option value="q4_0">q4_0</option></select>
-                              </div>
-                              <div className="field"><label>--pp List</label><input className="mono" value={s.pp} onChange={(e) => updateSuite("llama_benchy", { pp: e.target.value })} /></div>
-                              <div className="field"><label>--tg List</label><input className="mono" value={s.tg} onChange={(e) => updateSuite("llama_benchy", { tg: e.target.value })} /></div>
-                              <div className="field"><label>--depth List</label><input className="mono" value={s.depth} onChange={(e) => updateSuite("llama_benchy", { depth: e.target.value })} /></div>
-                              <div className="field"><label>--runs / --format</label>
-                                <div style={{ display: "flex", gap: "6px" }}>
-                                  <input type="number" value={s.runs} onChange={(e) => updateSuite("llama_benchy", { runs: Number(e.target.value) || 1 })} />
-                                  <select value={s.format} onChange={(e) => updateSuite("llama_benchy", { format: e.target.value })}><option value="md">md</option><option value="json">json</option></select>
-                                </div>
-                              </div>
-                            </div>
-                          )}
-
-                          {meta.id === "llmperf" && (
-                            <>
-                              <div className="chip-row" style={{ marginBottom: "6px" }}>
-                                <span className="small muted">Quick Profile:</span>
-                                <button type="button" className={`chip-btn ${Number(s.meanInput) === 1024 ? "active" : ""}`} onClick={() => updateSuite("llmperf", { meanInput: 1024, meanOutput: 256 })}>1024 in / 256 out (Parity)</button>
-                                <button type="button" className={`chip-btn ${Number(s.meanInput) === 512 ? "active" : ""}`} onClick={() => updateSuite("llmperf", { meanInput: 512, meanOutput: 128 })}>512 in / 128 out (Fast)</button>
-                              </div>
-                              <div className="form-grid">
-                                <div className="field"><label>Server -c / -np</label>
-                                  <div style={{ display: "flex", gap: "6px" }}>
-                                    <input type="number" value={s.c} onChange={(e) => updateSuite("llmperf", { c: Number(e.target.value) || 4096 })} />
-                                    <input type="number" value={s.np} style={{ maxWidth: "75px" }} onChange={(e) => updateSuite("llmperf", { np: Number(e.target.value) || 1 })} />
-                                  </div>
-                                </div>
-                                <div className="field"><label>Mean / Stddev Input</label>
-                                  <div style={{ display: "flex", gap: "6px" }}>
-                                    <input type="number" value={s.meanInput} onChange={(e) => updateSuite("llmperf", { meanInput: Number(e.target.value) || 128 })} />
-                                    <input type="number" value={s.stddevInput} onChange={(e) => updateSuite("llmperf", { stddevInput: Number(e.target.value) || 0 })} />
-                                  </div>
-                                </div>
-                                <div className="field"><label>Mean / Stddev Output</label>
-                                  <div style={{ display: "flex", gap: "6px" }}>
-                                    <input type="number" value={s.meanOutput} onChange={(e) => updateSuite("llmperf", { meanOutput: Number(e.target.value) || 64 })} />
-                                    <input type="number" value={s.stddevOutput} onChange={(e) => updateSuite("llmperf", { stddevOutput: Number(e.target.value) || 0 })} />
-                                  </div>
-                                </div>
-                                <div className="field"><label>Concurrency / Max Req</label>
-                                  <div style={{ display: "flex", gap: "6px" }}>
-                                    <input type="number" value={s.concurrency} onChange={(e) => updateSuite("llmperf", { concurrency: Number(e.target.value) || 1 })} />
-                                    <input type="number" value={s.maxCompleted} onChange={(e) => updateSuite("llmperf", { maxCompleted: Number(e.target.value) || 1 })} />
-                                  </div>
-                                </div>
-                              </div>
-                            </>
-                          )}
-
-                          {meta.id === "speed_bench" && (
-                            <>
-                              <div className="chip-row" style={{ marginBottom: "6px" }}>
-                                <span className="small muted">Server Context Quick Toggle:</span>
-                                {[16384, 32768, 65536].map((ctx) => (
-                                  <button key={ctx} type="button" className={`chip-btn ${Number(s.c) === ctx ? "active" : ""}`} onClick={() => updateSuite("speed_bench", { c: ctx })}>
-                                    {ctx === 65536 ? "64k Long Context" : `Standard ${ctx / 1024}k`}
-                                  </button>
-                                ))}
-                              </div>
-                              <div className="form-grid">
-                                <div className="field"><label>Server Context (-c)</label><input type="number" value={s.c} onChange={(e) => updateSuite("speed_bench", { c: Number(e.target.value) || 4096 })} /></div>
-                                <div className="field"><label>--category / --osl</label>
-                                  <div style={{ display: "flex", gap: "6px" }}>
-                                    <input className="mono" value={s.category} onChange={(e) => updateSuite("speed_bench", { category: e.target.value })} />
-                                    <input type="number" value={s.osl} style={{ maxWidth: "85px" }} onChange={(e) => updateSuite("speed_bench", { osl: Number(e.target.value) || 256 })} />
-                                  </div>
-                                </div>
-                                <div className="field"><label>--concurrency / --limit</label>
-                                  <div style={{ display: "flex", gap: "6px" }}>
-                                    <input type="number" value={s.concurrency} onChange={(e) => updateSuite("speed_bench", { concurrency: Number(e.target.value) || 1 })} />
-                                    <input type="number" value={s.limit} onChange={(e) => updateSuite("speed_bench", { limit: Number(e.target.value) || 1 })} />
-                                  </div>
-                                </div>
-                                <div className="field"><label>Comparator Baseline / Speculative</label>
-                                  <div style={{ display: "flex", gap: "6px" }}>
-                                    <input className="mono" value={s.compareBaselineFile} onChange={(e) => updateSuite("speed_bench", { compareBaselineFile: e.target.value })} />
-                                    <input className="mono" value={s.compareSpeculativeFile} onChange={(e) => updateSuite("speed_bench", { compareSpeculativeFile: e.target.value })} />
-                                  </div>
-                                </div>
-                              </div>
-                            </>
-                          )}
-
-                          {meta.id === "agentperf" && (
-                            <div className="form-grid">
-                              <div className="field"><label>Server Context (-c)</label><input type="number" value={s.c} onChange={(e) => updateSuite("agentperf", { c: Number(e.target.value) || 4096 })} /></div>
-                              <div className="field"><label>KV Cache (-ctk / -ctv)</label>
-                                <select value={s.ctk} onChange={(e) => updateSuite("agentperf", { ctk: e.target.value, ctv: e.target.value })}><option value="fp16">fp16</option><option value="q8_0">q8_0</option><option value="q4_0">q4_0</option></select>
-                              </div>
-                              <div className="field"><label>Extra Flags</label><input className="mono" value={s.extraFlags} onChange={(e) => updateSuite("agentperf", { extraFlags: e.target.value })} /></div>
-                            </div>
-                          )}
-
-                          {meta.id === "aiperf_std" && (
-                            <div className="form-grid">
-                              <div className="field"><label>Server Context (-c)</label><input type="number" value={s.c} onChange={(e) => updateSuite("aiperf_std", { c: Number(e.target.value) || 4096 })} /></div>
-                              <div className="field"><label>Concurrency / Requests</label>
-                                <div style={{ display: "flex", gap: "6px" }}>
-                                  <input type="number" value={s.concurrency} onChange={(e) => updateSuite("aiperf_std", { concurrency: Number(e.target.value) || 1 })} />
-                                  <input type="number" value={s.requestCount} onChange={(e) => updateSuite("aiperf_std", { requestCount: Number(e.target.value) || 1 })} />
-                                </div>
-                              </div>
-                              <div className="field"><label>ISL Mean / OSL Mean</label>
-                                <div style={{ display: "flex", gap: "6px" }}>
-                                  <input type="number" value={s.islMean} onChange={(e) => updateSuite("aiperf_std", { islMean: Number(e.target.value) || 128 })} />
-                                  <input type="number" value={s.oslMean} onChange={(e) => updateSuite("aiperf_std", { oslMean: Number(e.target.value) || 64 })} />
-                                </div>
-                              </div>
-                            </div>
-                          )}
-
-                          {meta.id === "aiperf_sweep" && (
-                            <div className="form-grid">
-                              <div className="field"><label>Server Context (-c)</label><input type="number" value={s.c} onChange={(e) => updateSuite("aiperf_sweep", { c: Number(e.target.value) || 4096 })} /></div>
-                              <div className="field"><label>KV Cache (-ctk / -ctv)</label>
-                                <select value={s.ctk} onChange={(e) => updateSuite("aiperf_sweep", { ctk: e.target.value, ctv: e.target.value })}><option value="fp16">fp16</option><option value="q8_0">q8_0 (Recommended)</option><option value="q4_0">q4_0</option></select>
-                              </div>
-                              <div className="field"><label>Sweep --isl List</label><input className="mono" value={s.islList} onChange={(e) => updateSuite("aiperf_sweep", { islList: e.target.value })} /></div>
-                              <div className="field"><label>Sweep --osl List</label><input className="mono" value={s.oslList} onChange={(e) => updateSuite("aiperf_sweep", { oslList: e.target.value })} /></div>
-                              <div className="field"><label>Concurrency / Warmup / Req</label>
-                                <div style={{ display: "flex", gap: "6px" }}>
-                                  <input type="number" value={s.concurrency} onChange={(e) => updateSuite("aiperf_sweep", { concurrency: Number(e.target.value) || 1 })} />
-                                  <input type="number" value={s.warmupCount} onChange={(e) => updateSuite("aiperf_sweep", { warmupCount: Number(e.target.value) || 0 })} />
-                                  <input type="number" value={s.requestCount} onChange={(e) => updateSuite("aiperf_sweep", { requestCount: Number(e.target.value) || 1 })} />
-                                </div>
-                              </div>
-                              <div className="field"><label>Options</label>
-                                <label style={{ fontWeight: 500 }}>
-                                  <input type="checkbox" checked={s.cachePrompt} onChange={(e) => updateSuite("aiperf_sweep", { cachePrompt: e.target.checked })} />{" "}
-                                  <code>cache_prompt:true</code>
-                                </label>
-                              </div>
-                            </div>
-                          )}
-                        </div>
-                      )}
-
-                      {meta.hasServer && (
-                        <TerminalBox
-                          titleLeft={`Terminal 1 · llama-server (${profile.shell})`}
-                          titleRight={`--alias "${state.model.alias}"`}
-                          code={srvCmd}
-                        />
-                      )}
-                      <TerminalBox
-                        titleLeft={`${meta.hasServer ? "Terminal 2 · Client Benchmark" : "Terminal · Native Direct Execution"} (${profile.shell})`}
-                        titleRight="Live Preview"
-                        code={cliCmd}
+                    <label key={sid} className={`suite-check-label ${verified ? "is-verified" : ""}`} title={m.title}>
+                      <input
+                        type="checkbox"
+                        checked={checked}
+                        onChange={(e) => {
+                          const nextSet = new Set(selectedSuites);
+                          if (e.target.checked) nextSet.add(sid);
+                          else nextSet.delete(sid);
+                          updateUi({ selectedRunSuites: Array.from(nextSet), previewMode: "selected" });
+                        }}
                       />
-
-                      <div className="action-bar">
-                        <div className="action-group">
-                          <CopyButton text={cliCmd} label="Copy Command" className="btn btn-primary" />
-                          {meta.hasServer && <CopyButton text={srvCmd} label="Copy Server Launch" className="btn" />}
-                        </div>
-                        <button
-                          type="button"
-                          className={`btn ${isDone ? "btn-emerald" : ""}`}
-                          onClick={() =>
-                            setState((prev) => ({
-                              ...prev,
-                              completedSteps: { ...prev.completedSteps, [meta.id]: !isDone }
-                            }))
-                          }
-                        >
-                          {isDone ? "✓ Step Complete" : "Mark Step Complete"}
-                        </button>
-                      </div>
-                    </article>
+                      <span>{m.shortLabel || sid}</span>
+                    </label>
                   );
                 })}
-              </section>
+              </div>
+            </div>
 
-              <section className="panel-card section-block" id="sec-playbook">
-                <div className="card-header" style={{ marginBottom: "12px" }}>
-                  <div className="card-title-group">
-                    <div className="card-kicker">
-                      <span className="index-num">05</span>
-                      <span className="badge badge-emerald">ALL-IN-ONE PLAYBOOK</span>
-                    </div>
-                    <h2 className="card-title">Complete Copy-Pasteable Runbook ({profile.shortName})</h2>
-                    <p className="card-desc">Combines every active suite using your live paths, naming rules, and preset settings.</p>
-                  </div>
-                  <div className="action-group">
-                    <CopyButton text={playbookCode} label="Copy Full Playbook" className="btn btn-primary" />
-                    <button
-                      type="button"
-                      className="btn"
-                      onClick={() =>
-                        downloadFile(`ai_benchmate_${state.model.slug || "run"}.${profile.os === "windows" ? "ps1" : "sh"}`, playbookCode)
-                      }
-                    >
-                      Download Script ({profile.os === "windows" ? ".ps1" : ".sh"})
-                    </button>
-                  </div>
-                </div>
-                <TerminalBox
-                  titleLeft={`${profile.shell} · ${state.ui.showMissingOnly ? "Missing/Incomplete Runs Only" : "Full 6-Suite Playbook"}`}
-                  titleRight={state.model.alias}
-                  code={playbookCode}
+            <div className="sb-inline-row">
+              <label className="sb-field-inline" style={{ minWidth: "240px" }}>
+                <span>Note</span>
+                <input
+                  type="text"
+                  className="sb-input"
+                  style={{ minWidth: "190px" }}
+                  placeholder="Performance fan profile"
+                  value={state.ui.runNote || ""}
+                  onChange={(e) => updateUi({ runNote: e.target.value })}
                 />
-              </section>
-            </>
-          )}
+              </label>
+              <button type="button" className="btn btn-outline" onClick={() => updateUi({ previewMode: "selected" })}>Preview commands</button>
+              <CopyButton text={runPreviewCode} label="Copy commands" className="btn btn-primary" />
+              <button type="button" className="btn btn-outline" onClick={() => updateUi({ showParamCustomize: !state.ui.showParamCustomize })}>
+                Customize parameters {state.ui.showParamCustomize ? "▴" : "▾"}
+              </button>
+              <button
+                type="button"
+                className="btn btn-outline"
+                onClick={() => downloadFile(`ai_benchmate_${state.model.slug || "run"}.${profile.os === "windows" ? "ps1" : "sh"}`, runPreviewCode)}
+              >
+                Download {profile.os === "windows" ? ".ps1" : ".sh"}
+              </button>
+            </div>
 
-          {state.ui.activeTab === "coverage" && (
-            <section className="panel-card">
-              <div className="card-header" style={{ marginBottom: "14px" }}>
-                <div className="card-title-group">
-                  <div className="card-kicker">
-                    <span className="index-num">02</span>
-                    <span className="badge badge-cyan">ANTI-1KB STUB AUDITOR</span>
-                  </div>
-                  <h2 className="card-title">Content-Aware Benchmark Folder Auditor</h2>
-                  <p className="card-desc">
-                    Inspects both file size (&gt;1–2 KB) and internal formatted metric rows/JSON exports via Directory Picker, folder selection, or drag-and-drop.
-                  </p>
-                </div>
-                <div className="action-group">
-                  {typeof window.showDirectoryPicker === "function" && (
-                    <button
-                      type="button"
-                      className="btn btn-primary"
-                      onClick={async () => {
-                        try {
-                          const dirHandle = await window.showDirectoryPicker();
-                          const entries = [];
-                          const walk = async (handle, prefix) => {
-                            for await (const [name, child] of handle.entries()) {
-                              const rel = prefix ? prefix + "/" + name : name;
-                              if (child.kind === "file") {
-                                const file = await child.getFile();
-                                entries.push({ path: rel, name, size: file.size, textLoader: () => file.text() });
-                              } else if (child.kind === "directory") {
-                                await walk(child, rel);
-                              }
-                            }
-                          };
-                          await walk(dirHandle, "");
-                          await runAuditEntries(entries, dirHandle.name);
-                        } catch {}
-                      }}
-                    >
-                      Open Results Folder (Picker)
-                    </button>
-                  )}
-                  <label className="btn" style={{ cursor: "pointer" }}>
-                    Select Folder
-                    <input
-                      type="file"
-                      webkitdirectory=""
-                      multiple
-                      className="hidden"
-                      onChange={async (e) => {
-                        const files = Array.from(e.target.files || []);
-                        if (!files.length) return;
-                        const entries = files.map((f) => ({
-                          path: f.webkitRelativePath || f.name,
-                          name: f.name,
-                          size: f.size,
-                          textLoader: () => f.text()
-                        }));
-                        const rootName = (files[0].webkitRelativePath || "").split("/")[0] || "Selected Folder";
-                        await runAuditEntries(entries, rootName);
-                      }}
-                    />
-                  </label>
+            {guardrails.warnings.map((w) => (
+              <div key={w.id} className={`sb-banner ${w.severity === "crimson" ? "sb-banner-danger" : "sb-banner-warn"}`}>
+                <div><strong>{w.title}:</strong> {w.detail}</div>
+                <button type="button" className="btn btn-sm btn-outline" onClick={() => applyGuardrailFix(w.id)}>{w.fixLabel}</button>
+              </div>
+            ))}
+
+            {state.ui.showParamCustomize && (
+              <div className="sb-drawer">
+                <div className="sb-inline-row" style={{ justifyContent: "space-between", marginBottom: "10px" }}>
+                  <strong style={{ fontSize: "13px" }}>Customize Model Fields, Naming & Active Suite Parameters</strong>
                   <button
                     type="button"
-                    className="btn btn-amber"
-                    onClick={() => updateUi({ showMissingOnly: true, activeTab: "builder" })}
+                    className="btn btn-sm btn-outline"
+                    onClick={() => setState((prev) => ({ ...prev, suites: JSON.parse(JSON.stringify(PARITY_DEFAULTS)), naming: { ...prev.naming, activePresetName: "Baseline Parity Defaults" } }))}
                   >
-                    Generate Commands for Missing / Incomplete Only
+                    Reset to Parity Defaults
                   </button>
                 </div>
+                <div className="sb-form-grid" style={{ marginBottom: "12px" }}>
+                  <div className="sb-field"><label>Model Alias (--alias)</label><input type="text" className="sb-input mono" value={state.model.alias} onChange={(e) => updateModel({ alias: e.target.value })} /></div>
+                  <div className="sb-field"><label>Output File Slug</label><input type="text" className="sb-input mono" value={state.model.slug} onChange={(e) => updateModel({ slug: e.target.value })} /></div>
+                  <div className="sb-field"><label>HF Tokenizer ID</label><input type="text" className="sb-input mono" value={state.model.tokenizer} onChange={(e) => updateModel({ tokenizer: e.target.value })} /></div>
+                  <div className="sb-field">
+                    <label>Result Naming Mode</label>
+                    <select className="sb-select" value={state.naming.mode} onChange={(e) => setState((prev) => ({ ...prev, naming: { ...prev.naming, mode: e.target.value } }))}>
+                      <option value="auto">Auto (Stamp on Customize)</option>
+                      <option value="stamped">Mode A · Parameter-Stamped</option>
+                      <option value="classic">Mode B · Classic Parity</option>
+                    </select>
+                  </div>
+                </div>
+                <div className="sb-form-grid">
+                  {selectedSuites.includes("llama_bench") && (
+                    <div className="sb-field"><label>llama-bench (-p / -n / -r)</label>
+                      <div className="sb-inline-row" style={{ gap: "6px" }}>
+                        <input type="text" className="sb-input mono" style={{ width: "92px" }} value={state.suites.llama_bench.p} onChange={(e) => updateSuiteField("llama_bench", "p", e.target.value)} />
+                        <input type="text" className="sb-input mono" style={{ width: "82px" }} value={state.suites.llama_bench.n} onChange={(e) => updateSuiteField("llama_bench", "n", e.target.value)} />
+                        <input type="number" className="sb-input mono" style={{ width: "58px" }} value={state.suites.llama_bench.r} onChange={(e) => updateSuiteField("llama_bench", "r", Number(e.target.value) || 0)} />
+                      </div>
+                    </div>
+                  )}
+                  {selectedSuites.includes("llama_benchy") && (
+                    <div className="sb-field"><label>llama-benchy (-c / depth / runs)</label>
+                      <div className="sb-inline-row" style={{ gap: "6px" }}>
+                        <input type="number" className="sb-input mono" style={{ width: "84px" }} value={state.suites.llama_benchy.c} onChange={(e) => updateSuiteField("llama_benchy", "c", Number(e.target.value) || 0)} />
+                        <input type="text" className="sb-input mono" style={{ width: "84px" }} value={state.suites.llama_benchy.depth} onChange={(e) => updateSuiteField("llama_benchy", "depth", e.target.value)} />
+                        <input type="number" className="sb-input mono" style={{ width: "54px" }} value={state.suites.llama_benchy.runs} onChange={(e) => updateSuiteField("llama_benchy", "runs", Number(e.target.value) || 0)} />
+                      </div>
+                    </div>
+                  )}
+                  {selectedSuites.includes("llmperf") && (
+                    <div className="sb-field"><label>llmperf (in / out / conc / max)</label>
+                      <div className="sb-inline-row" style={{ gap: "6px" }}>
+                        <input type="number" className="sb-input mono" style={{ width: "68px" }} value={state.suites.llmperf.meanInput} onChange={(e) => updateSuiteField("llmperf", "meanInput", Number(e.target.value) || 0)} />
+                        <input type="number" className="sb-input mono" style={{ width: "64px" }} value={state.suites.llmperf.meanOutput} onChange={(e) => updateSuiteField("llmperf", "meanOutput", Number(e.target.value) || 0)} />
+                        <input type="number" className="sb-input mono" style={{ width: "52px" }} value={state.suites.llmperf.concurrency} onChange={(e) => updateSuiteField("llmperf", "concurrency", Number(e.target.value) || 0)} />
+                        <input type="number" className="sb-input mono" style={{ width: "54px" }} value={state.suites.llmperf.maxCompleted} onChange={(e) => updateSuiteField("llmperf", "maxCompleted", Number(e.target.value) || 0)} />
+                      </div>
+                    </div>
+                  )}
+                  {selectedSuites.includes("speed_bench") && (
+                    <div className="sb-field"><label>SPEED-Bench (-c / category / limit)</label>
+                      <div className="sb-inline-row" style={{ gap: "6px" }}>
+                        <input type="number" className="sb-input mono" style={{ width: "82px" }} value={state.suites.speed_bench.c} onChange={(e) => updateSuiteField("speed_bench", "c", Number(e.target.value) || 0)} />
+                        <input type="text" className="sb-input mono" style={{ width: "68px" }} value={state.suites.speed_bench.category} onChange={(e) => updateSuiteField("speed_bench", "category", e.target.value)} />
+                        <input type="number" className="sb-input mono" style={{ width: "54px" }} value={state.suites.speed_bench.limit} onChange={(e) => updateSuiteField("speed_bench", "limit", Number(e.target.value) || 0)} />
+                      </div>
+                    </div>
+                  )}
+                  {selectedSuites.includes("aiperf_std") && (
+                    <div className="sb-field"><label>AIPerf Standard (-c / conc / reqs)</label>
+                      <div className="sb-inline-row" style={{ gap: "6px" }}>
+                        <input type="number" className="sb-input mono" style={{ width: "82px" }} value={state.suites.aiperf_std.c} onChange={(e) => updateSuiteField("aiperf_std", "c", Number(e.target.value) || 0)} />
+                        <input type="number" className="sb-input mono" style={{ width: "54px" }} value={state.suites.aiperf_std.concurrency} onChange={(e) => updateSuiteField("aiperf_std", "concurrency", Number(e.target.value) || 0)} />
+                        <input type="number" className="sb-input mono" style={{ width: "60px" }} value={state.suites.aiperf_std.requestCount} onChange={(e) => updateSuiteField("aiperf_std", "requestCount", Number(e.target.value) || 0)} />
+                      </div>
+                    </div>
+                  )}
+                  {selectedSuites.includes("aiperf_sweep") && (
+                    <div className="sb-field"><label>AIPerf 64k (-c / KV / isl)</label>
+                      <div className="sb-inline-row" style={{ gap: "6px" }}>
+                        <input type="number" className="sb-input mono" style={{ width: "82px" }} value={state.suites.aiperf_sweep.c} onChange={(e) => updateSuiteField("aiperf_sweep", "c", Number(e.target.value) || 0)} />
+                        <select className="sb-select" style={{ width: "74px" }} value={state.suites.aiperf_sweep.ctk} onChange={(e) => { updateSuiteField("aiperf_sweep", "ctk", e.target.value); updateSuiteField("aiperf_sweep", "ctv", e.target.value); }}>
+                          <option value="fp16">fp16</option>
+                          <option value="q8_0">q8_0</option>
+                          <option value="q4_0">q4_0</option>
+                        </select>
+                        <input type="text" className="sb-input mono" style={{ width: "140px" }} value={state.suites.aiperf_sweep.islList} onChange={(e) => updateSuiteField("aiperf_sweep", "islList", e.target.value)} />
+                      </div>
+                    </div>
+                  )}
+                </div>
               </div>
+            )}
 
-              <div
-                className={`dropzone ${dragOverAudit ? "dragover" : ""}`}
-                style={{ marginBottom: "16px" }}
-                onDragOver={(e) => { e.preventDefault(); setDragOverAudit(true); }}
-                onDragLeave={() => setDragOverAudit(false)}
-                onDrop={async (e) => {
-                  e.preventDefault();
-                  setDragOverAudit(false);
-                  const entries = [];
-                  const readEntry = async (entry, prefix) => {
-                    if (entry.isFile) {
-                      await new Promise((res) =>
-                        entry.file((file) => {
-                          entries.push({ path: prefix + entry.name, name: entry.name, size: file.size, textLoader: () => file.text() });
-                          res();
-                        })
-                      );
-                    } else if (entry.isDirectory) {
-                      const reader = entry.createReader();
-                      await new Promise((res) => {
-                        const all = [];
-                        const batch = () =>
-                          reader.readEntries(async (list) => {
-                            if (!list.length) {
-                              for (const c of all) await readEntry(c, prefix + entry.name + "/");
-                              res();
-                            } else {
-                              all.push(...list);
-                              batch();
-                            }
-                          });
-                        batch();
-                      });
-                    }
-                  };
-                  for (const it of Array.from(e.dataTransfer.items || [])) {
-                    const entry = it.webkitGetAsEntry ? it.webkitGetAsEntry() : null;
-                    if (entry) await readEntry(entry, "");
-                  }
-                  if (entries.length) await runAuditEntries(entries, "Dropped Folder");
+            <TerminalBox titleLeft={`${state.ui.previewMode || "selected"} · ${profile.shell} · ${state.model.alias}`} code={runPreviewCode} />
+          </>
+        )}
+
+        {state.ui.activeTab === "results" && (
+          <>
+            <h2 className="sb-section-title">Results & Anti-1KB Audit Coverage ({verifiedCount}/7 Verified)</h2>
+            <div className="sb-inline-row">
+              {typeof window.showDirectoryPicker === "function" && (
+                <button
+                  type="button"
+                  className="btn btn-primary"
+                  onClick={async () => {
+                    try {
+                      const dirHandle = await window.showDirectoryPicker();
+                      const entries = [];
+                      async function walk(handle, prefix) {
+                        for await (const [name, child] of handle.entries()) {
+                          const rel = prefix ? `${prefix}/${name}` : name;
+                          if (child.kind === "file") {
+                            const f = await child.getFile();
+                            entries.push({ path: rel, name, size: f.size, textLoader: () => f.text() });
+                          } else if (child.kind === "directory") {
+                            await walk(child, rel);
+                          }
+                        }
+                      }
+                      await walk(dirHandle, "");
+                      await runAuditEntries(entries, dirHandle.name);
+                    } catch {}
+                  }}
+                >
+                  Open Results Folder
+                </button>
+              )}
+              <label className="btn btn-outline" style={{ cursor: "pointer" }}>
+                Select Folder
+                <input
+                  type="file"
+                  webkitdirectory=""
+                  multiple
+                  className="hidden"
+                  onChange={async (e) => {
+                    const files = Array.from(e.target.files || []);
+                    if (!files.length) return;
+                    const entries = files.map((f) => ({ path: f.webkitRelativePath || f.name, name: f.name, size: f.size, textLoader: () => f.text() }));
+                    await runAuditEntries(entries, (files[0].webkitRelativePath || "").split("/")[0] || "Selected Folder");
+                  }}
+                />
+              </label>
+              <button
+                type="button"
+                className="btn btn-outline"
+                onClick={() => {
+                  const missing = SUITE_METADATA.filter((m) => !(auditItems[m.id] && auditItems[m.id].status === "verified")).map((m) => m.id);
+                  updateUi({ selectedRunSuites: missing, previewMode: "outstanding", activeTab: "run" });
                 }}
               >
-                <div style={{ fontWeight: 700, marginBottom: "4px" }}>Drop Centralized Results Folder or Files Here</div>
-                <div className="small muted">
-                  {state.audit.lastFolderName
-                    ? `Last Audited: ${state.audit.lastFolderName} (${state.audit.lastAuditedAt})`
-                    : "Drag your results folder here (or click Select Folder above) to verify all 6 benchmark suites."}
-                </div>
-              </div>
+                Select Missing in Run Tab
+              </button>
+              <span className="small muted">
+                {state.audit.lastFolderName ? `Last Audited: ${state.audit.lastFolderName} (${state.audit.lastAuditedAt})` : "Inspects byte sizes & parsed JSON/MD rows."}
+              </span>
+            </div>
 
-              <div className="summary-kpi-row" style={{ marginBottom: "16px" }}>
-                <div className="kpi-box"><div className="kpi-label">Verified Complete</div><div className="kpi-value" style={{ color: "var(--accent-emerald)" }}>{verifiedCount} / 7</div></div>
-                <div className="kpi-box"><div className="kpi-label">Partial / Mismatch</div><div className="kpi-value" style={{ color: "var(--accent-amber)" }}>{Object.values(state.audit.items || {}).filter((i) => i?.status === "partial").length}</div></div>
-                <div className="kpi-box"><div className="kpi-label">Stub / Failed</div><div className="kpi-value" style={{ color: "var(--accent-crimson)" }}>{Object.values(state.audit.items || {}).filter((i) => i?.status === "stub").length}</div></div>
-                <div className="kpi-box"><div className="kpi-label">Not Run</div><div className="kpi-value">{7 - Object.values(state.audit.items || {}).filter((i) => i && i.status !== "not_run").length}</div></div>
-              </div>
+            <div
+              className={`sb-dropzone ${dragOverAudit ? "dragover" : ""}`}
+              onDragOver={(e) => { e.preventDefault(); setDragOverAudit(true); }}
+              onDragLeave={() => setDragOverAudit(false)}
+              onDrop={handleAuditDrop}
+            >
+              <strong>Drop Centralized Results Folder or Benchmark Files Here</strong>
+              <div className="small muted">Detects &gt;1 KB stubs, incomplete <code>llama-benchy</code> depth runs, and <code>aiperf.log</code> overflow errors.</div>
+            </div>
 
-              <div className="data-table-wrap" style={{ marginBottom: "16px" }}>
-                <table className="data-table">
-                  <thead><tr><th>Suite</th><th>Expected Output Target</th><th>Status</th><th>Audit Findings</th></tr></thead>
-                  <tbody>
-                    {SUITE_METADATA.map((meta) => {
-                      const exp = getOutputTarget(state, meta.id);
-                      const r = (state.audit.items || {})[meta.id] || { status: "not_run", label: "NOT RUN", detail: "Select or drop a folder to audit." };
-                      const badgeCls = r.status === "verified" ? "badge-emerald" : r.status === "partial" ? "badge-amber" : r.status === "stub" ? "badge-crimson" : "";
-                      const icon = r.status === "verified" ? "🟢" : r.status === "partial" ? "🟡" : r.status === "stub" ? "🔴" : "⚪";
-                      return (
-                        <tr key={meta.id}>
-                          <td><strong>{meta.index} · {meta.title}</strong></td>
-                          <td><code>{exp.leaf}</code></td>
-                          <td><span className={`badge ${badgeCls}`}>{icon} {r.label}</span></td>
-                          <td className="small">{r.detail}</td>
-                        </tr>
-                      );
-                    })}
-                  </tbody>
-                </table>
-              </div>
-
-              <div style={{ marginBottom: "16px" }}>
-                <TerminalBox
-                  titleLeft="Terminal Deep Audit Script (Fallback / Headless SSH)"
-                  code={buildDeepAuditScript(state)}
-                  rightAction={<CopyButton text={buildDeepAuditScript(state)} label="Copy Audit Script" style={{ padding: "3px 9px" }} />}
-                />
-              </div>
-
-              <h3 style={{ margin: "0 0 8px", fontSize: "14px" }}>Reference Parity Matrix (Radeon AI Pro 9700 vs. DGX Spark)</h3>
-              <div className="data-table-wrap">
-                <table className="data-table">
-                  <thead><tr><th>Suite / Config</th><th>Radeon AI Pro 9700</th><th>DGX Spark</th><th>Purpose</th></tr></thead>
-                  <tbody>
-                    {REFERENCE_PARITY_GUIDE.map((row, idx) => (
-                      <tr key={idx}>
-                        <td><strong>{row.suite}</strong></td>
-                        <td><span className="badge badge-emerald">{row.r9700}</span></td>
-                        <td><span className={`badge ${row.dgx.startsWith("Completed") ? "badge-emerald" : "badge-amber"}`}>{row.dgx}</span></td>
-                        <td className="small muted">{row.purpose}</td>
+            <div className="sb-table-wrap">
+              <table className="sb-table">
+                <thead><tr><th>Suite</th><th>Expected Output Target</th><th>Status</th><th>Audit Findings</th></tr></thead>
+                <tbody>
+                  {SUITE_METADATA.map((meta) => {
+                    const exp = getOutputTarget(state, meta.id);
+                    const r = auditItems[meta.id] || { status: "not_run", label: "NOT RUN", detail: "Select or drop a folder to audit." };
+                    const cls = r.status === "verified" ? "sb-badge-ok" : r.status === "partial" ? "sb-badge-warn" : r.status === "stub" ? "sb-badge-danger" : "";
+                    return (
+                      <tr key={meta.id}>
+                        <td><strong>{meta.shortLabel || meta.id}</strong></td>
+                        <td className="mono small">{exp.leaf}</td>
+                        <td><span className={`sb-badge ${cls}`}>{r.label}</span></td>
+                        <td className="small muted">{r.detail}</td>
                       </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            </section>
-          )}
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
 
-          {state.ui.activeTab === "results" && (
-            <section className="panel-card">
-              <div className="card-header" style={{ marginBottom: "14px" }}>
-                <div className="card-title-group">
-                  <div className="card-kicker"><span className="index-num">03</span><span className="badge badge-cyan">RESULT PARSER & COMPARISON STUDIO</span></div>
-                  <h2 className="card-title">Interactive Comparison Tables, SVG Charts & Exports</h2>
-                  <p className="card-desc">Drop or load <code>.md</code> and <code>.json</code> benchmark files across DGX Spark, RTX 5090 & Radeon AI Pro R9700.</p>
-                </div>
-                <div className="action-group">
-                  <button
-                    type="button"
-                    className="btn btn-amber"
-                    onClick={() => {
-                      const nonSample = records.filter((r) => !r.isSample);
-                      const nextRecs = [...nonSample, ...SAMPLE_RESULTS_DATASET];
-                      saveSnapshotIDB("latest_results", nextRecs);
-                      setState((prev) => ({ ...prev, results: { includeSampleData: true, loadedRecords: nextRecs } }));
-                    }}
-                  >
-                    Load Sample Dataset (DGX Spark vs R9700)
-                  </button>
-                  <label className="btn btn-primary" style={{ cursor: "pointer" }}>
-                    Load Result Files (.md / .json)
-                    <input type="file" multiple accept=".md,.json,.csv" className="hidden" onChange={(e) => handleResultFiles(e.target.files)} />
-                  </label>
-                  <button type="button" className="btn" onClick={() => downloadFile("ai_benchmate_comparison.md", exportComparisonMarkdown(records), "text/markdown")}>Export .md</button>
-                  <button type="button" className="btn" onClick={() => downloadFile("ai_benchmate_comparison.csv", exportComparisonCsv(records), "text/csv")}>Export .csv</button>
-                  {records.length > 0 && (
-                    <button
-                      type="button"
-                      className="btn btn-crimson"
-                      onClick={() => {
-                        saveSnapshotIDB("latest_results", []);
-                        setState((prev) => ({ ...prev, results: { includeSampleData: false, loadedRecords: [] } }));
-                      }}
-                    >
-                      Clear
-                    </button>
-                  )}
-                </div>
-              </div>
-
-              <div
-                className={`dropzone ${dragOverResults ? "dragover" : ""}`}
-                style={{ marginBottom: "16px" }}
-                onDragOver={(e) => { e.preventDefault(); setDragOverResults(true); }}
-                onDragLeave={() => setDragOverResults(false)}
-                onDrop={(e) => { e.preventDefault(); setDragOverResults(false); handleResultFiles(e.dataTransfer.files); }}
+            <h3 className="sb-sub-title">Parsed Benchmark Comparisons ({records.length})</h3>
+            <div className="sb-inline-row">
+              <button
+                type="button"
+                className="btn btn-outline"
+                onClick={async () => {
+                  const nonSample = records.filter((r) => !r.isSample);
+                  const next = [...nonSample, ...SAMPLE_RESULTS_DATASET];
+                  setState((prev) => ({ ...prev, results: { includeSampleData: true, loadedRecords: next } }));
+                  await saveSnapshotIDB("latest_results", next);
+                }}
               >
-                <strong>Drag & Drop Benchmark <code>.md</code> or <code>.json</code> Result Files Here</strong>
-                <div className="small muted" style={{ marginTop: "4px" }}>
-                  Supports <code>llama-bench</code>, <code>llama-benchy</code>, <code>llmperf</code>, <code>SPEED-Bench</code>, and <code>AIPerf</code> exports ({records.length} record(s) active).
+                Load Sample Dataset (DGX vs R9700)
+              </button>
+              <label className="btn btn-outline" style={{ cursor: "pointer" }}>
+                Load .md / .json Files
+                <input type="file" multiple accept=".md,.json,.csv" className="hidden" onChange={(e) => handleResultFiles(e.target.files)} />
+              </label>
+              <button type="button" className="btn btn-outline" onClick={() => updateUi({ showCharts: !state.ui.showCharts })}>
+                {state.ui.showCharts ? "Hide Charts" : "Show Charts"}
+              </button>
+              <button type="button" className="btn btn-outline" onClick={() => downloadFile("ai_benchmate_comparison.md", exportComparisonMarkdown(records), "text/markdown")}>Export .md</button>
+              <button type="button" className="btn btn-outline" onClick={() => downloadFile("ai_benchmate_comparison.csv", exportComparisonCsv(records), "text/csv")}>Export .csv</button>
+              {records.length > 0 && (
+                <button
+                  type="button"
+                  className="btn btn-danger"
+                  onClick={async () => {
+                    setState((prev) => ({ ...prev, results: { includeSampleData: false, loadedRecords: [] } }));
+                    await saveSnapshotIDB("latest_results", []);
+                  }}
+                >
+                  Clear
+                </button>
+              )}
+            </div>
+
+            {state.ui.showCharts && (
+              <div className="sb-chart-grid">
+                <SvgBarChart title="Decode (tg128) & Prefill (/10)" subtitle="Native llama-bench throughput" items={benchBars} unit="t/s" />
+                <SvgBarChart title="Depth 4096 KV Degradation (%)" subtitle="Lower is better KV stability" items={depthBars} unit="% drop" />
+                <SvgBarChart title="4-Stream Parallel Throughput" subtitle="llmperf concurrent output" items={concBars} unit="t/s" />
+              </div>
+            )}
+
+            <div className="sb-table-wrap">
+              <table className="sb-table">
+                <thead><tr><th>Source File</th><th>GPU / Backend</th><th>Model</th><th>Suite</th><th>Metrics</th></tr></thead>
+                <tbody>
+                  {records.length ? records.map((r) => (
+                    <tr key={r.id}>
+                      <td className="mono small">{r.sourceFile}</td>
+                      <td>{r.gpuLabel}</td>
+                      <td>{r.modelLabel}</td>
+                      <td><span className="sb-badge">{r.suiteType}</span></td>
+                      <td className="mono small">{Object.entries(r.metrics || {}).map(([k, v]) => `${k}=${v}`).join(" · ")}</td>
+                    </tr>
+                  )) : (
+                    <tr><td colSpan={5} className="muted">No result files loaded. Click "Load Sample Dataset" or upload .md/.json files above.</td></tr>
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </>
+        )}
+
+        {state.ui.activeTab === "remote" && (
+          <>
+            <h2 className="sb-section-title">SSH Remote, Hermes Stack & Platform Setup Fixes</h2>
+            <div className="sb-form-grid" style={{ marginBottom: "14px" }}>
+              <div className="sb-field"><label>SSH User</label><input type="text" className="sb-input mono" value={state.ssh.user} onChange={(e) => setState((p) => ({ ...p, ssh: { ...p.ssh, user: e.target.value } }))} /></div>
+              <div className="sb-field"><label>Remote Host / IP</label><input type="text" className="sb-input mono" value={state.ssh.host} onChange={(e) => setState((p) => ({ ...p, ssh: { ...p.ssh, host: e.target.value } }))} /></div>
+              <div className="sb-field"><label>Port / tmux Session</label>
+                <div className="sb-inline-row" style={{ gap: "6px", flexWrap: "nowrap" }}>
+                  <input type="number" className="sb-input mono" style={{ width: "72px" }} value={state.ssh.port} onChange={(e) => setState((p) => ({ ...p, ssh: { ...p.ssh, port: Number(e.target.value) || 22 } }))} />
+                  <input type="text" className="sb-input mono" style={{ flex: 1, minWidth: "80px" }} value={state.ssh.tmuxSession} onChange={(e) => setState((p) => ({ ...p, ssh: { ...p.ssh, tmuxSession: e.target.value } }))} />
                 </div>
               </div>
+              <div className="sb-field"><label>Remote Results Dir</label><input type="text" className="sb-input mono" value={state.ssh.remoteResultsDir} onChange={(e) => setState((p) => ({ ...p, ssh: { ...p.ssh, remoteResultsDir: e.target.value } }))} /></div>
+              <div className="sb-field"><label>Local Pull Folder</label><input type="text" className="sb-input mono" value={state.ssh.localPullDir} onChange={(e) => setState((p) => ({ ...p, ssh: { ...p.ssh, localPullDir: e.target.value } }))} /></div>
+              <div className="sb-field"><label>Hermes LAN IP</label><input type="text" className="sb-input mono" value={state.ssh.hermesServerIp} onChange={(e) => setState((p) => ({ ...p, ssh: { ...p.ssh, hermesServerIp: e.target.value } }))} /></div>
+            </div>
 
-              <div className="chart-grid" style={{ marginBottom: "16px" }}>
-                <SvgBarChart title="Prefill (pp512 / 10) & Decode (tg128) Throughput" subtitle="Native C++ llama-bench comparison" items={benchBars} unit="t/s" />
-                <SvgBarChart title="Depth 4096 KV Cache Degradation (%)" subtitle="Lower % drop = better long-context cache stability" items={depthBars} unit="% drop" />
-                <SvgBarChart title="4-Stream Concurrency Output Throughput" subtitle="llmperf / AIPerf parallel stream total t/s" items={concBars} unit="t/s" />
-                <SvgBarChart title="SPEED-Bench Qualitative Mean Throughput" subtitle="Multi-category qualitative average speed" items={sbBars} unit="t/s" />
-              </div>
-
-              <div className="chart-card" style={{ marginBottom: "16px" }}>
-                <div>
-                  <h4 style={{ margin: 0, fontSize: "14px" }}>16k / 32k / 64k Long-Context Scaling Curve (AIPerf Sweep)</h4>
-                  <div className="small muted">Decode t/s scaling across 16k, 32k, and 64k input token prompts</div>
-                </div>
-                {sweepRecs.length ? (
-                  <svg className="chart-svg" viewBox="0 0 560 175">
-                    <line x1="60" y1="20" x2="60" y2="140" stroke="var(--border-strong)" />
-                    <line x1="60" y1="140" x2="520" y2="140" stroke="var(--border-strong)" />
-                    <text x="110" y="160" fill="var(--text-secondary)" fontSize="11" fontFamily="var(--font-mono)">16k ISL</text>
-                    <text x="275" y="160" fill="var(--text-secondary)" fontSize="11" fontFamily="var(--font-mono)">32k ISL</text>
-                    <text x="455" y="160" fill="var(--text-secondary)" fontSize="11" fontFamily="var(--font-mono)">64k ISL</text>
-                    {sweepRecs.map((rec, idx) => {
-                      const maxT = Math.max(...sweepRecs.flatMap((r) => [r.metrics.tps16k || 0, r.metrics.tps32k || 0, r.metrics.tps64k || 0]), 40);
-                      const yMap = (v) => 135 - Math.round(((v || 0) / maxT) * 105);
-                      const col = idx % 2 === 0 ? "var(--accent-emerald)" : "var(--accent-primary)";
-                      return (
-                        <g key={idx}>
-                          <polyline
-                            fill="none"
-                            stroke={col}
-                            strokeWidth="2.5"
-                            points={`125,${yMap(rec.metrics.tps16k)} 295,${yMap(rec.metrics.tps32k)} 470,${yMap(rec.metrics.tps64k)}`}
-                          />
-                          <circle cx="125" cy={yMap(rec.metrics.tps16k)} r="4" fill={col} />
-                          <circle cx="295" cy={yMap(rec.metrics.tps32k)} r="4" fill={col} />
-                          <circle cx="470" cy={yMap(rec.metrics.tps64k)} r="4" fill={col} />
-                          <text x="72" y={18 + idx * 15} fill={col} fontSize="11" fontFamily="var(--font-mono)">
-                            ● {rec.gpuLabel} ({rec.metrics.tps16k} → {rec.metrics.tps64k} t/s)
-                          </text>
-                        </g>
-                      );
-                    })}
-                  </svg>
-                ) : (
-                  <div className="small muted">Load an AIPerf 64k sweep JSON or click "Load Sample Dataset" above to render the 16k → 64k scaling curve.</div>
-                )}
-              </div>
-
-              <div className="data-table-wrap">
-                <table className="data-table">
-                  <thead><tr><th>Source File</th><th>GPU / Backend</th><th>Model</th><th>Suite</th><th>Parsed Metrics</th></tr></thead>
-                  <tbody>
-                    {records.length ? (
-                      records.map((r) => (
-                        <tr key={r.id}>
-                          <td><code>{r.sourceFile}</code> {r.isSample && <span className="badge badge-amber">SAMPLE</span>}</td>
-                          <td>{r.gpuLabel}</td>
-                          <td>{r.modelLabel}</td>
-                          <td><span className="badge">{r.suiteType}</span></td>
-                          <td className="mono small">{Object.entries(r.metrics || {}).map(([k, v]) => `${k}=${v}`).join(" · ")}</td>
-                        </tr>
-                      ))
-                    ) : (
-                      <tr><td colSpan="5" className="muted">No result files loaded yet. Drop files above or click "Load Sample Dataset".</td></tr>
-                    )}
-                  </tbody>
-                </table>
-              </div>
-            </section>
-          )}
-
-          {state.ui.activeTab === "ssh" && (
-            <section className="panel-card">
-              <div className="card-header" style={{ marginBottom: "14px" }}>
-                <div className="card-title-group">
-                  <div className="card-kicker"><span className="index-num">04</span><span className="badge badge-emerald">SSH REMOTE & HERMES HOST</span></div>
-                  <h2 className="card-title">Remote Linux/DGX Execution, tmux, scp & Hermes Stack Control</h2>
-                  <p className="card-desc">All SSH parameters and Hermes LAN routing settings auto-save to <code>localStorage</code>.</p>
-                </div>
-              </div>
-
-              <div className="form-grid" style={{ marginBottom: "16px" }}>
-                <div className="field"><label>SSH User</label><input className="mono" value={state.ssh.user} onChange={(e) => updateSsh({ user: e.target.value })} /></div>
-                <div className="field"><label>Remote Host / IP</label><input className="mono" value={state.ssh.host} onChange={(e) => updateSsh({ host: e.target.value })} /></div>
-                <div className="field"><label>SSH Port</label><input type="number" className="mono" value={state.ssh.port} onChange={(e) => updateSsh({ port: Number(e.target.value) || 22 })} /></div>
-                <div className="field"><label>tmux Session Name</label><input className="mono" value={state.ssh.tmuxSession} onChange={(e) => updateSsh({ tmuxSession: e.target.value })} /></div>
-                <div className="field"><label>Remote Results Directory</label><input className="mono" value={state.ssh.remoteResultsDir} onChange={(e) => updateSsh({ remoteResultsDir: e.target.value })} /></div>
-                <div className="field"><label>Local Windows Pull Folder</label><input className="mono" value={state.ssh.localPullDir} onChange={(e) => updateSsh({ localPullDir: e.target.value })} /></div>
-                <div className="field"><label>Hermes Host LAN IP</label><input className="mono" value={state.ssh.hermesServerIp} onChange={(e) => updateSsh({ hermesServerIp: e.target.value })} /></div>
-                <div className="field"><label>vLLM Restore Options</label>
-                  <label style={{ fontWeight: 500 }}>
-                    <input type="checkbox" checked={state.ssh.includeVllmInStartAi} onChange={(e) => updateSsh({ includeVllmInStartAi: e.target.checked })} /> Include vLLM ({state.ssh.vllmGpuUtil} VRAM) in restore
-                  </label>
-                </div>
-              </div>
-
-              <div style={{ display: "flex", flexDirection: "column", gap: "14px" }}>
-                {[
-                  { title: "01 · Windows PowerShell 1-Line SSH Trigger (Persistent tmux)", code: sshCmds.psTrigger },
-                  { title: "02 · Remote Linux tmux Split Session Setup", code: sshCmds.tmuxLaunch },
-                  { title: "03 · Pull Remote Results via scp -r into Local Centralized Folder", code: sshCmds.scpPull },
-                  { title: "04 · Pre-Benchmark DGX Spark VRAM Sweep (Free All AI Ports)", code: sshCmds.vramSweep },
-                  { title: "05 · Post-Benchmark Restore: Bring Hermes AI Stack Back Online (start-ai)", code: sshCmds.startAiRestore },
-                  { title: "06 · Hermes Agent Multi-Instance Routing YAML Snippet", code: sshCmds.hermesYaml }
-                ].map((b, i) => (
-                  <TerminalBox
-                    key={i}
-                    titleLeft={b.title}
-                    code={b.code}
-                    rightAction={<CopyButton text={b.code} label="Copy" style={{ padding: "3px 9px" }} />}
-                  />
+            <div className="sb-inline-row" style={{ justifyContent: "space-between", marginBottom: "10px" }}>
+              <div className="sb-pill-row">
+                {remoteSections.map((sec) => (
+                  <button
+                    key={sec.id}
+                    type="button"
+                    className={`sb-chip ${activeRemote.id === sec.id ? "active" : ""}`}
+                    onClick={() => updateUi({ remoteSection: sec.id })}
+                  >
+                    {sec.label}
+                  </button>
                 ))}
               </div>
-            </section>
-          )}
+              <label className="suite-check-label">
+                <input
+                  type="checkbox"
+                  checked={state.ssh.includeVllmInStartAi}
+                  onChange={(e) => setState((p) => ({ ...p, ssh: { ...p.ssh, includeVllmInStartAi: e.target.checked } }))}
+                />
+                <span>Include vLLM ({state.ssh.vllmGpuUtil})</span>
+              </label>
+            </div>
 
-          {state.ui.activeTab === "setup" && (
-            <section className="panel-card">
-              <div className="card-header" style={{ marginBottom: "14px" }}>
-                <div className="card-title-group">
-                  <div className="card-kicker"><span className="index-num">05</span><span className="badge badge-amber">ENVIRONMENT SETUP & HOTFIXES</span></div>
-                  <h2 className="card-title">Platform Setup, Python 3.12+ Patches & Troubleshooting ({profile.shortName})</h2>
-                  <p className="card-desc">Tailored for {profile.name} ({profile.arch}).</p>
-                </div>
-              </div>
-
-              <div style={{ display: "flex", flexDirection: "column", gap: "14px" }}>
-                {setupCards.map((c) => (
-                  <TerminalBox
-                    key={c.id}
-                    titleLeft={
-                      <span>
-                        <strong>{c.title}</strong> <span className="badge badge-cyan" style={{ marginLeft: "6px" }}>{c.badge}</span>
-                      </span>
-                    }
-                    code={c.cmd}
-                    rightAction={<CopyButton text={c.cmd} label="Copy Command" style={{ padding: "3px 9px" }} />}
-                  />
-                ))}
-              </div>
-            </section>
-          )}
-        </main>
-      </div>
-    </>
+            <TerminalBox titleLeft={activeRemote.label} code={activeRemote.code} />
+          </>
+        )}
+      </main>
+    </div>
   );
 }

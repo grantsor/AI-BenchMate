@@ -57,12 +57,11 @@ Everything for **AI BenchMate** (code, plans, architecture notes, and prompt/res
   1. **Portable Zero-Server Static Edition (`portable/`):** Zero-dependency HTML5 + CSS3 + JS (`benchmate-data.js`, `benchmate-engine.js`, `benchmate-ui.js`), `launch-local.bat`, `launch-local.sh`, runs over `file://` or `py -m http.server`.
   2. **React + Vite Edition (Root `src/`):** `src/App.jsx`, `src/styles.css`, `src/core/benchmate-data.js`, `src/core/benchmate-engine.js`, `package.json`, `vite.config.js`.
 - **Key Implemented Features:**
-  - BrewedOps Motion Library UI with **Dark Mode (Obsidian Studio)**, **Light Mode (Warm Editorial Paper)**, **System Preference**, toggleable **Light Terminal (`#F0EFEA`)**, and **Option 2A Unified Pause Animations / Benchmark Stealth Mode** (strips transitions, scramble animations, `backdrop-filter`, shadows, and GPU layers).
-  - **Universal Persistence:** All settings, choices, tabs, drawers, presets, models, SSH config, and audit/chart datasets auto-save to `localStorage` + `IndexedDB`.
-  - **4 Hardware/OS Profiles:** DGX Spark Linux ARM64, RTX Spark Windows ARM64, NVIDIA GPU Windows x64, AMD GPU Windows x64 (Vulkan/ROCm toggle).
-  - **Smart Path Parser, Quick Model Chips & Dynamic Naming Engine:** Mode A (Parameter-Stamped) + Mode B (Classic Parity) + `--alias` parity toggle.
-  - **6 Core Suites + Proactive Guardrails:** Context Overflow (`65588 > 65536`) trap + 1-click Auto-Fix (`-c 70000 -ctk q8_0 -ctv q8_0`), VRAM + KV Cache Estimator, All-in-One Playbook export.
-  - **Content-Aware Folder Auditor & Visual Comparison Studio:** `showDirectoryPicker()`, `webkitdirectory`, Drag-and-Drop, Anti-1KB Stub & `aiperf.log` error inspection, 5 SVG charts, Sample Dataset toggle, `.md`/`.csv` exports, and SSH/Hermes host control.
+  - Minimalist `sparkbench`-inspired 5-tab UI (**System** | **Models** | **Run** | **Results** | **Remote & Setup**) with Light default + Dark + System modes, optional Light Terminal (`#F0EFEA`), and **Option 2A Pause Animations / Benchmark Stealth Mode**.
+  - **Models ("What fits, and at what context"):** Interactive memory Tier & KV fit table showing `Best ctx`, `Total`, `Budget`, and `Headroom` (clickable rows + custom `.gguf` path auto-extractor).
+  - **Run ("Run benchmarks"):** Highlighted outstanding parity benchmarks box (`qwen38-27b`, `qwen36-35b-a3b`), single-run model/suite checkboxes, collapsible `Customize parameters` drawer, proactive Guardrails (`65588 > 65536` trap + VRAM check), and a single clean terminal command preview box.
+  - **Universal Persistence:** All settings, choices, active tab, selected suites, notes, parameter customizer drawer, SSH config, and audit/chart datasets auto-save to `localStorage` + `IndexedDB`.
+  - **Content-Aware Folder Auditor & Results Studio:** `showDirectoryPicker()`, `webkitdirectory`, Drag-and-Drop, Anti-1KB Stub & `aiperf.log` error inspection, collapsible SVG charts, Sample Dataset toggle, `.md`/`.csv` exports, and SSH/Hermes host control in Remote & Setup.
 - **Reference Docs Archived Inside Repo:**
   - `docs/references/AI Benchmate Prompt.md`
   - `docs/references/DGX Spark vs Radeon AI Pro 9700 — AI Benchmarks & Inference.md`

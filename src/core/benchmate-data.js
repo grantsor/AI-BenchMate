@@ -95,6 +95,8 @@ export const QUICK_MODELS = [
     id: "qwen38_27b",
     label: "Qwen3.8-27B (Dense)",
     tag: "Parity Dense",
+    quant: "UD-Q4_K_M",
+    kind: "hybrid",
     relativeWin: "unsloth\\Qwen3.8-27B-GGUF\\Qwen3.8-27B-UD-Q4_K_M.gguf",
     relativeLinux: "Qwen3.8-27B-UD-Q4_K_M.gguf",
     alias: "Qwen3.8-27B",
@@ -108,6 +110,8 @@ export const QUICK_MODELS = [
     id: "qwen36_35b_moe",
     label: "Qwen3.6-35B-A3B (MoE)",
     tag: "Parity MoE",
+    quant: "UD-Q4_K_M",
+    kind: "moe+hybrid",
     relativeWin: "unsloth\\Qwen3.6-35B-A3B-GGUF\\Qwen3.6-35B-A3B-UD-Q4_K_M.gguf",
     relativeLinux: "Qwen3.6-35B-A3B-UD-Q4_K_M.gguf",
     alias: "Qwen3.6-35B-A3B",
@@ -121,6 +125,8 @@ export const QUICK_MODELS = [
     id: "nemotron_30b",
     label: "Nemotron-3-Nano-30B-A3B",
     tag: "Hermes Reasoning",
+    quant: "Q4_K_M",
+    kind: "moe",
     relativeWin: "nemotron-3-nano-omni-30b-a3b-reasoning-gguf\\Nemotron-3-Nano-Omni-30B-A3B-Reasoning-Q4_K_M.gguf",
     relativeLinux: "nemotron-3-nano-omni-30b-a3b-reasoning-gguf/Nemotron-3-Nano-Omni-30B-A3B-Reasoning-Q4_K_M.gguf",
     alias: "Nemotron-3-Nano-30B-A3B",
@@ -134,6 +140,8 @@ export const QUICK_MODELS = [
     id: "gemma4_31b",
     label: "Gemma-4-31B-it-QAT",
     tag: "Hermes Analyst",
+    quant: "Q4_0",
+    kind: "dense",
     relativeWin: "gemma-4-31B-it-QAT-GGU\\gemma-4-31B-it-QAT-Q4_0.gguf",
     relativeLinux: "gemma-4-31B-it-QAT-GGU/gemma-4-31B-it-QAT-Q4_0.gguf",
     alias: "gemma-4-31b-qat",
@@ -147,6 +155,8 @@ export const QUICK_MODELS = [
     id: "hermes3_8b",
     label: "Hermes-3-Llama-3.1-8B (Q8_0)",
     tag: "Hermes Fast",
+    quant: "Q8_0",
+    kind: "dense",
     relativeWin: "Hermes-3-Llama-3.1-8B-GGUF\\Hermes-3-Llama-3.1-8B-Q8_0.gguf",
     relativeLinux: "Hermes-3-Llama-3.1-8B-Q8_0.gguf",
     alias: "Hermes-3-Llama-3.1-8B",
@@ -160,6 +170,8 @@ export const QUICK_MODELS = [
     id: "nemotron_120b_nvfp4",
     label: "Nemotron-3-Super-120B (vLLM NVFP4)",
     tag: "DGX Orchestrator",
+    quant: "NVFP4",
+    kind: "moe",
     relativeWin: "nvidia\\NVIDIA-Nemotron-3-Super-120B-A12B-NVFP4",
     relativeLinux: "nvidia/NVIDIA-Nemotron-3-Super-120B-A12B-NVFP4",
     alias: "nvidia/NVIDIA-Nemotron-3-Super-120B-A12B-NVFP4",
@@ -168,6 +180,51 @@ export const QUICK_MODELS = [
     weightGb: 68.0,
     paramsB: 120,
     archType: "moe"
+  },
+  {
+    id: "llama33_70b",
+    label: "Llama 3.3 70B Instruct",
+    tag: "Large Dense",
+    quant: "Q4_K_M",
+    kind: "dense",
+    relativeWin: "meta-llama\\Llama-3.3-70B-Instruct-GGUF\\Llama-3.3-70B-Instruct-Q4_K_M.gguf",
+    relativeLinux: "Llama-3.3-70B-Instruct-Q4_K_M.gguf",
+    alias: "Llama-3.3-70B-Instruct",
+    slug: "llama33_70b",
+    tokenizer: "meta-llama/Llama-3.3-70B-Instruct",
+    weightGb: 42.5,
+    paramsB: 70,
+    archType: "dense"
+  },
+  {
+    id: "qwen3_32b",
+    label: "Qwen3 32B",
+    tag: "Dense 32B",
+    quant: "Q4_K_M",
+    kind: "dense",
+    relativeWin: "Qwen\\Qwen3-32B-GGUF\\Qwen3-32B-Q4_K_M.gguf",
+    relativeLinux: "Qwen3-32B-Q4_K_M.gguf",
+    alias: "Qwen3-32B",
+    slug: "qwen3_32b",
+    tokenizer: "Qwen/Qwen3-32B",
+    weightGb: 19.8,
+    paramsB: 32,
+    archType: "dense"
+  },
+  {
+    id: "qwen3_4b",
+    label: "Qwen3 4B",
+    tag: "Lightweight",
+    quant: "Q4_K_M",
+    kind: "dense",
+    relativeWin: "Qwen\\Qwen3-4B-GGUF\\Qwen3-4B-Q4_K_M.gguf",
+    relativeLinux: "Qwen3-4B-Q4_K_M.gguf",
+    alias: "Qwen3-4B",
+    slug: "qwen3_4b",
+    tokenizer: "Qwen/Qwen3-4B",
+    weightGb: 2.8,
+    paramsB: 4,
+    archType: "dense"
   }
 ];
 
@@ -267,6 +324,7 @@ export const PARITY_DEFAULTS = {
 export const SUITE_METADATA = [
   {
     id: "llama_bench",
+    shortLabel: "llama-bench",
     index: "01",
     title: "Native C++ llama-bench",
     category: "NATIVE C++",
@@ -277,6 +335,7 @@ export const SUITE_METADATA = [
   },
   {
     id: "llama_benchy",
+    shortLabel: "llama-benchy",
     index: "02",
     title: "llama-benchy HTTP & Depth Sweep",
     category: "HTTP DEPTH",
@@ -287,6 +346,7 @@ export const SUITE_METADATA = [
   },
   {
     id: "llmperf",
+    shortLabel: "llmperf",
     index: "03",
     title: "llmperf Ray Concurrency",
     category: "CONCURRENCY",
@@ -297,6 +357,7 @@ export const SUITE_METADATA = [
   },
   {
     id: "speed_bench",
+    shortLabel: "speed-bench",
     index: "04",
     title: "SPEED-Bench Workload & Comparator",
     category: "QUALITATIVE",
@@ -307,6 +368,7 @@ export const SUITE_METADATA = [
   },
   {
     id: "agentperf",
+    shortLabel: "agentperf",
     index: "05",
     title: "AA-AgentPerf-Local",
     category: "AGENTIC",
@@ -317,6 +379,7 @@ export const SUITE_METADATA = [
   },
   {
     id: "aiperf_std",
+    shortLabel: "aiperf",
     index: "06A",
     title: "AIPerf Standard Concurrency",
     category: "CONCURRENCY",
@@ -327,6 +390,7 @@ export const SUITE_METADATA = [
   },
   {
     id: "aiperf_sweep",
+    shortLabel: "aiperf-64k",
     index: "06B",
     title: "AIPerf 64k Long-Context Zip Sweep",
     category: "LONG-CONTEXT SWEEP",
@@ -467,12 +531,19 @@ export function createDefaultState() {
   return {
     schemaVersion: 1,
     ui: {
-      theme: "dark",
+      theme: "light",
       lightTerminal: false,
       pauseAnimations: false,
-      activeTab: "builder",
+      activeTab: "run",
       activeSection: "sec-hardware",
       showMissingOnly: false,
+      selectedRunSuites: ["aiperf_std", "aiperf_sweep", "speed_bench"],
+      runNote: "",
+      previewMode: "selected",
+      showParamCustomize: false,
+      fitKv: "fp16",
+      showCharts: false,
+      remoteSection: "ssh_ps",
       expandedDrawers: {
         llama_bench: false,
         llama_benchy: false,

@@ -120,3 +120,21 @@ This file records the chronological conversation prompts, technical decisions, a
 - **Root `index.html` Auto-Redirect:** Added a synchronous `<head>` protocol check in [index.html](../../index.html) that automatically redirects `file://` launches (from root `index.html` or `dist/index.html`) to the Portable Edition while keeping the static module entrypoint intact for `vite dev` / `vite build`.
 - **Synchronous Portable Render:** Updated [portable/js/benchmate-ui.js](../../portable/js/benchmate-ui.js) (`init()`) to call `renderApp()` synchronously before hydrating optional IndexedDB snapshots (and run immediately if `document.readyState !== "loading"`).
 - **Verification:** Re-ran `npm run build` (`32 modules transformed`, `dist/index.html` + `dist/assets/*` emitted cleanly) and `node scripts\verify-benchmate.mjs` (`9/9` checks passed), and pushed updates to both `AI-BenchMate` and `AI-BenchMate-Portable`.
+
+---
+
+## Entry 9 — 2026-11-14 (Minimalist `sparkbench`-Style UI Redesign Across Both Editions)
+
+### User Request
+- Reported that the initial UI felt too cluttered and provided two reference `sparkbench` screenshots (`Models` fit table and `Run` minimal layout) requesting a cleaner, less cluttered design while keeping AI BenchMate's own benchmark suites.
+
+### Changes Implemented (Synced 1:1 Across `portable/` and `src/`)
+- **Data & Engine (`benchmate-data.js`, `benchmate-engine.js`):**
+  - Enriched `QUICK_MODELS` with `quant`, `kind`, and additional reference models (9 models total).
+  - Added `computeModelFitRows(state)` (calculates usable GiB budget `0.9 × Tier`, best fitting context window from `256K` down to `4K`, total GiB, and headroom per KV precision) and `buildSelectedSuitesPreview(state)` (`selected`, `outstanding`, and `prereqs` modes).
+  - Defaulted UI to Light theme (`#F7F9FC` canvas / `#FFFFFF` cards / `#1B5698` accents) with connected folder tabs (`System`, `Models`, `Run`, `Results`, `Remote & Setup`) while keeping Dark Mode, System Theme, Stealth Mode (`Pause Animations`), and legacy `localStorage` tab migration intact.
+- **Minimalist Layout (`portable/css/styles.css`, `src/styles.css`, `portable/js/benchmate-ui.js`, `src/App.jsx`):**
+  - Removed sidebar rail and multi-card command clutter in favor of single focused workspace cards with flat pill headers (`platform`, `memory`, `binding`, `localhost only · publishes nothing`).
+  - Built the **Models** fit table with Tier/KV controls + clickable model selection and custom `.gguf` input.
+  - Built the **Run** tab with the left-bordered Outstanding callout rows, inline suite checkboxes (`agentperf`, `aiperf`, `aiperf-64k`, `llama-bench`, `llama-benchy`, `llmperf`, `speed-bench`), collapsible `Customize parameters` drawer, guardrail banners, and a single dark terminal command preview box.
+  - Streamlined **Results** (audit table + toggleable charts/exports) and **Remote & Setup** (pill switcher + single terminal box).
