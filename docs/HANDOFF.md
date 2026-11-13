@@ -42,28 +42,39 @@ Everything for **AI BenchMate** (code, plans, architecture notes, and prompt/res
 - **Python:** `3.15.0` (`py --version` -> `Python 3.15.0`)
 - **.NET SDK:** `9.0.310` (`C:\Program Files\dotnet\dotnet.exe`)
 - **Git:** `2.56.0.windows.4`
+- **Git:** `2.56.0.windows.4`
 - **GitHub CLI:** `2.104.0` (`gh`, authenticated as `grantsor`)
+- **Node.js:** `v26.13.1` (`npm` via `npm.cmd` in PowerShell)
 
-### Not Installed (Stack-Dependent / Optional)
-- **Node.js / npm (`node`, `npm`)**: Only needed if a JS/TS stack is ever chosen (not recommended for benchmark low-overhead).
-- **uv (`uv`)**: Optional fast Python package/environment manager.
-- **Rust / Cargo (`cargo`)**: Only needed if building a Rust or Tauri desktop app.
+### Not Installed (Optional)
+- **uv (`uv`)** / **Rust (`cargo`)**: Not required for either web edition.
 
 ---
 
 ## 4. Architecture & Implementation Log
 
-> *Pending the user's AI BenchMate specification prompt before choosing the tech stack.*
-
-- **Core Non-Functional Requirement:** **Ultra-Low-Overhead Benchmark Requirement** — the app must stay as lightweight as possible (near-zero idle CPU, minimal RAM, and zero GPU/VRAM contention) because it remains open while the PC is running benchmarks.
-- **Tech Stack:** **TBD (Deferred)** — Holding off on stack selection (including `.NET 9` vs. alternatives) until analyzing the full **AI BenchMate** specification prompt against the ultra-low-overhead requirement.
-- **Key Modules:** TBD
-- **GitHub Repository URL:** `https://github.com/grantsor/AI-BenchMate` (Public)
+- **Dual Editions Delivered:**
+  1. **Portable Zero-Server Static Edition (`portable/`):** Zero-dependency HTML5 + CSS3 + JS (`benchmate-data.js`, `benchmate-engine.js`, `benchmate-ui.js`), `launch-local.bat`, `launch-local.sh`, runs over `file://` or `py -m http.server`.
+  2. **React + Vite Edition (Root `src/`):** `src/App.jsx`, `src/styles.css`, `src/core/benchmate-data.js`, `src/core/benchmate-engine.js`, `package.json`, `vite.config.js`.
+- **Key Implemented Features:**
+  - BrewedOps Motion Library UI with **Dark Mode (Obsidian Studio)**, **Light Mode (Warm Editorial Paper)**, **System Preference**, toggleable **Light Terminal (`#F0EFEA`)**, and **Option 2A Unified Pause Animations / Benchmark Stealth Mode** (strips transitions, scramble animations, `backdrop-filter`, shadows, and GPU layers).
+  - **Universal Persistence:** All settings, choices, tabs, drawers, presets, models, SSH config, and audit/chart datasets auto-save to `localStorage` + `IndexedDB`.
+  - **4 Hardware/OS Profiles:** DGX Spark Linux ARM64, RTX Spark Windows ARM64, NVIDIA GPU Windows x64, AMD GPU Windows x64 (Vulkan/ROCm toggle).
+  - **Smart Path Parser, Quick Model Chips & Dynamic Naming Engine:** Mode A (Parameter-Stamped) + Mode B (Classic Parity) + `--alias` parity toggle.
+  - **6 Core Suites + Proactive Guardrails:** Context Overflow (`65588 > 65536`) trap + 1-click Auto-Fix (`-c 70000 -ctk q8_0 -ctv q8_0`), VRAM + KV Cache Estimator, All-in-One Playbook export.
+  - **Content-Aware Folder Auditor & Visual Comparison Studio:** `showDirectoryPicker()`, `webkitdirectory`, Drag-and-Drop, Anti-1KB Stub & `aiperf.log` error inspection, 5 SVG charts, Sample Dataset toggle, `.md`/`.csv` exports, and SSH/Hermes host control.
+- **Reference Docs Archived Inside Repo:**
+  - `docs/references/AI Benchmate Prompt.md`
+  - `docs/references/DGX Spark vs Radeon AI Pro 9700 — AI Benchmarks & Inference.md`
+  - `docs/references/DGX Spark Setup & Hermes Server Guide.md`
+- **Proposal Document:** `docs/plans/2026-11-14-ai-benchmate-proposal.md`
+- **GitHub Repositories:**
+  - Main (React + Vite + Portable + Docs): `https://github.com/grantsor/AI-BenchMate` (Public)
+  - Standalone Portable Edition: `https://github.com/grantsor/AI-BenchMate-Portable` (Public)
 
 ---
 
 ## 5. Immediate Next Steps
 
-1. Receive the user's **AI BenchMate** specification prompt and log it in `docs/PROMPT_HISTORY.md`.
-2. Analyze the exact functional requirements together with the ultra-low-overhead constraint to choose the optimal tech stack.
-3. Author the implementation plan inside `docs/plans/`, build, verify, and keep `docs/HANDOFF.md` and `docs/PROMPT_HISTORY.md` updated at every milestone.
+1. Open `portable/index.html` (or run `npm.cmd run dev` for the React + Vite edition) and optionally test against a real benchmark folder on DGX Spark or Radeon AI Pro R9700.
+2. When transferring to another PC, either copy-paste `C:\Users\GadgetPilipinas\Documents\AI BenchMate` or `git clone` either GitHub repository.

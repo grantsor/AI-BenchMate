@@ -1,0 +1,153 @@
+import assert from "node:assert/strict";
+import fs from "node:fs";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
+
+// Minimal browser global shims for Node test execution
+const memStore = new Map();
+globalThis.window = {
+  localStorage: {
+    getItem: (k) => (memStore.has(k) ? memStore.get(k) : null),
+    setItem: (k, v) => memStore.set(k, String(v))
+  }
+};
+
+import {
+  HARDWARE_PROFILES,
+  PARITY_DEFAULTS,
+  SAMPLE_RESULTS_DATASET,
+  createDefaultState
+} from "../src/core/benchmate-data.js";
+import {
+  auditFileList,
+  buildAllInOnePlaybook,
+  buildServerCommand,
+  buildSuiteClientCommand,
+  evaluateGuardrails,
+  exportComparisonCsv,
+  exportComparisonMarkdown,
+  getOutputTarget,
+  loadState,
+  parseModelPath,
+  parseResultFile,
+  saveState
+} from "../src/core/benchmate-engine.js";
+
+// 1. Smart Path Parser tests (Windows & Linux, zero hardcoded usernames)
+const winParsed = parseModelPath(
+  "C:\\Users\\Admin\\.lmstudio\\models\\unsloth\\Qwen3.8-27B-GGUF\\Qwen3.8-27B-UD-Q4_K_M.gguf"
+);
+assert.equal(winParsed.osStyle, "windows");
+assert.equal(winParsed.alias, "Qwen3.8-27B");
+assert.equal(winParsed.slug, "qwen38");
+assert.equal(winParsed.tokenizer, "Qwen/Qwen3.8-27B");
+
+const linParsed = parseModelPath("/home/user/models/Qwen3.6-35B-A3B-UD-Q4_K_M.gguf");
+assert.equal(linParsed.osStyle, "linux");
+assert.equal(linParsed.alias, "Qwen3.6-35B-A3B");
+assert.equal(linParsed.slug, "qwen36");
+assert.equal(linParsed.tokenizer, "Qwen/Qwen3.6-35B-A3B");
+
+// 2. Universal localStorage persistence test
+const s0 = createDefaultState();
+s0.ui.pauseAnimations = true;
+s0.hardware.vramGb = 32;
+saveState(s0);
+const s1 = loadState();
+assert.equal(s1.ui.pauseAnimations, true);
+assert.equal(s1.hardware.vramGb, 32);
+
+// 3. Dynamic Naming Engine (Classic vs Parameter-Stamped)
+const baseState = createDefaultState();
+baseState.naming.mode = "classic";
+assert.ok(getOutputTarget(baseState, "llama_bench").leaf.endsWith("llama_bench_qwen38.md"));
+assert.ok(getOutputTarget(baseState, "aiperf_sweep").leaf.startsWith("aiperf_qwen38_nv64k"));
+
+baseState.naming.mode = "stamped";
+assert.ok(getOutputTarget(baseState, "llama_bench").leaf.includes("pp512-2048_tg128-512_r3.md"));
+assert.ok(getOutputTarget(baseState, "aiperf_sweep").leaf.includes("ctx70k_kvq8_0_isl16k-32k-64k_osl1024_c1_r3"));
+
+// 4. Hardware/OS Command Adaptation across all 4 profiles
+for (const pid of Object.keys(HARDWARE_PROFILES)) {
+  const st = createDefaultState();
+  st.hardware.profileId = pid;
+  const prof = HARDWARE_PROFILES[pid];
+  const srv = buildServerCommand(st, "aiperf_sweep");
+  const cli = buildSuiteClientCommand(st, "llama_bench");
+  assert.ok(srv.includes(`--alias "${st.model.alias}"`), `Missing --alias for ${pid}`);
+  if (prof.os === "windows") {
+    assert.ok(srv.includes("llama-server.exe"), `Missing .exe server for ${pid}`);
+    assert.ok(cli.includes("Tee-Object"), `Missing PowerShell Tee-Object for ${pid}`);
+  } else {
+    assert.ok(!srv.includes(".exe"), `Unexpected .exe for ${pid}`);
+    assert.ok(cli.includes("| tee "), `Missing bash tee for ${pid}`);
+  }
+}
+
+// 5. Context Overflow Guardrail (65588 > 65536 Trap) & VRAM Warning
+const trapState = createDefaultState();
+trapState.hardware.profileId = "amd_win_x64";
+trapState.hardware.vramGb = 32;
+trapState.suites.aiperf_sweep.c = 65536; // Trigger overflow: 65536 + 1024 + 64 = 66624 > 65536
+trapState.suites.aiperf_sweep.ctk = "fp16";
+const g = evaluateGuardrails(trapState);
+assert.ok(g.warnings.some((w) => w.id === "ctx_aiperf_sweep"), "Expected context overflow warning");
+assert.ok(g.warnings.some((w) => w.id === "vram_overflow"), "Expected VRAM overflow warning on 32 GB R9700");
+
+// 6. Content-Aware Folder Auditor (Anti-1KB Stub + aiperf.log error extraction)
+const auditRes = await auditFileList(
+  [
+    {
+      path: "llama_bench_qwen38.md",
+      name: "llama_bench_qwen38.md",
+      size: 2048,
+      textLoader: async () => "| model | test | t/s |\n| --- | --- | --- |\n| qwen38 | pp512 | 1945.2 |\n| qwen38 | tg128 | 22.4 |"
+    },
+    {
+      path: "llama_benchy_qwen38.md",
+      name: "llama_benchy_qwen38.md",
+      size: 240,
+      textLoader: async () => "| header |"
+    },
+    {
+      path: "aiperf_qwen38_nv64k/logs/aiperf.log",
+      name: "aiperf.log",
+      size: 620,
+      textLoader: async () => "INFO starting\nERROR: prompt length 66612 exceeds n_ctx 65536\n"
+    }
+  ],
+  createDefaultState()
+);
+assert.equal(auditRes.llama_bench.status, "verified");
+assert.equal(auditRes.llama_benchy.status, "stub");
+assert.equal(auditRes.aiperf_sweep.status, "stub");
+assert.ok(auditRes.aiperf_sweep.detail.includes("66612"));
+
+// 7. Playbook & Export verification
+const playbook = buildAllInOnePlaybook(createDefaultState(), false);
+assert.ok(playbook.includes("llama-bench") && playbook.includes("aiperf profile"));
+assert.ok(exportComparisonMarkdown(SAMPLE_RESULTS_DATASET).includes("DGX Spark"));
+assert.ok(exportComparisonCsv(SAMPLE_RESULTS_DATASET).includes("Radeon AI Pro R9700"));
+
+// 8. Verify Portable files exist alongside React + Vite files
+const rootDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
+assert.ok(fs.existsSync(path.join(rootDir, "portable", "index.html")));
+assert.ok(fs.existsSync(path.join(rootDir, "portable", "js", "benchmate-ui.js")));
+assert.ok(fs.existsSync(path.join(rootDir, "src", "App.jsx")));
+
+// 9. Verify Portable IIFE bundle in vm sandbox (simulating file:// browser script loading)
+import vm from "node:vm";
+const winCtx = { window: { localStorage: globalThis.window.localStorage }, document: {} };
+winCtx.window.window = winCtx.window;
+vm.createContext(winCtx);
+vm.runInContext(fs.readFileSync(path.join(rootDir, "portable", "js", "benchmate-data.js"), "utf8"), winCtx);
+vm.runInContext(fs.readFileSync(path.join(rootDir, "portable", "js", "benchmate-engine.js"), "utf8"), winCtx);
+assert.ok(winCtx.window.BenchmateData && winCtx.window.BenchmateEngine);
+const pState = winCtx.window.BenchmateData.createDefaultState();
+assert.ok(winCtx.window.BenchmateEngine.buildServerCommand(pState, "aiperf_sweep").includes("--alias"));
+assert.ok(winCtx.window.BenchmateEngine.evaluateGuardrails({
+  ...pState,
+  suites: { ...pState.suites, aiperf_sweep: { ...pState.suites.aiperf_sweep, c: 65536 } }
+}).warnings.some((w) => w.id === "ctx_aiperf_sweep"));
+
+console.log("ALL AI BENCHMATE VERIFICATION CHECKS PASSED (9/9)");

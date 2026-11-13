@@ -21,5 +21,7 @@ To keep this project 100% portable between PCs (whether transferred via GitHub o
 
 ## Current Project Status
 
-- **Stage:** Pre-build setup (portable documentation scaffold committed and pushed; tech stack decision deferred until analyzing the user's AI BenchMate specification prompt).
-- **Repository:** Public GitHub repository live at `https://github.com/grantsor/AI-BenchMate` (branch `main`).
+- **Stage:** Both editions built (`portable/` Zero-Server Static Edition and root React + Vite Edition) with universal `localStorage` + `IndexedDB` persistence and BrewedOps Motion Library Dark/Light UI.
+- **Repositories:**
+  - Main Repo (React + Vite + Portable + Docs): `https://github.com/grantsor/AI-BenchMate` (Public, `main`)
+  - Standalone Portable Repo: `https://github.com/grantsor/AI-BenchMate-Portable` (Public, `main`)

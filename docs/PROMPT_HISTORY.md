@@ -81,3 +81,29 @@ This file records the chronological conversation prompts, technical decisions, a
 - Verified GitHub CLI authentication as `grantsor`.
 - Updated documentation to defer tech stack selection until analyzing the upcoming specification prompt.
 - Created public GitHub repository `https://github.com/grantsor/AI-BenchMate` and pushed initial commit on `main`.
+
+---
+
+## Entry 6 — 2026-11-14 (Full Specification Received & Optimization Proposal Prepared)
+
+### User Request
+- Execute the specification in `AI Benchmate Prompt.md` using `DGX Spark vs Radeon AI Pro 9700 — AI Benchmarks & Inference.md` and `DGX Spark Setup & Hermes Server Guide.md` as references.
+- Suggest any unclear points or optimizations first and wait for user opinions/approval before proceeding with implementation.
+
+### Actions & Documentation Updates
+- Copied all 3 reference markdown files into `docs/references/` so the workspace remains 100% self-contained inside `C:\Users\GadgetPilipinas\Documents\AI BenchMate`.
+- Authored [docs/plans/2026-11-14-ai-benchmate-proposal.md](../plans/2026-11-14-ai-benchmate-proposal.md) detailing 6 optimization recommendations (Zero-Server Static Web App architecture with `file://` folder-audit fallback, Benchmark Stealth Mode, `--alias` parity in `llama-server`, reference model/path presets without hardcoded usernames, DGX Spark `start-ai`/Hermes stop-restore integration, and optional demo comparison dataset) and awaiting user approval.
+
+---
+
+## Entry 7 — 2026-11-14 (Dual Editions Built & Published to Two GitHub Repos)
+
+### User Approval & Decisions
+- **#1 Build Both Editions & 2 GitHub Repos:** Build Option 1A (Portable Zero-Server Static Edition) AND Option 1B (React + Vite Edition), publishing to two separate GitHub repositories.
+- **#2 Option 2A Unified Toggle + Universal Persistence:** Single "Pause Animations" toggle (disabling motion + GPU blurs/shadows) and automatically remember every configurable setting, choice, and option across sessions (`localStorage` + `IndexedDB`).
+- **#3 Approved All Optimizations:** `--alias` parity in `llama-server`, pre-loaded model chips, DGX/Hermes `start-ai` & fixes, and Sample Dataset toggle in Results & Charts.
+
+### Implementation & Verification
+- Built **Portable Edition** under `portable/` (`index.html`, `css/styles.css`, `js/benchmate-data.js`, `js/benchmate-engine.js`, `js/benchmate-ui.js`, `launch-local.bat`, `launch-local.sh`, `README.md`).
+- Installed Node.js `v26.13.1` LTS and built **React + Vite Edition** in root (`package.json`, `vite.config.js`, `index.html`, `src/main.jsx`, `src/App.jsx`, `src/styles.css`, `src/core/benchmate-data.js`, `src/core/benchmate-engine.js`).
+- Published both public GitHub repositories (`AI-BenchMate` and `AI-BenchMate-Portable`).

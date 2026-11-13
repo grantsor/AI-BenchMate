@@ -26,4 +26,22 @@
 
 ## Getting Started
 
-*Build and run instructions will be added here once the AI BenchMate specification and tech stack are finalized.*
+AI BenchMate ships in **two editions** inside this repository:
+
+### 1. Portable Zero-Server Edition (`portable/` · `AI-BenchMate-Portable`)
+Ultra-lightweight (~25–40 MB RAM, 0.0% idle CPU, zero `node_modules`) so you can keep it open on any benchmark rig:
+- **Instant launch:** Double-click `portable/index.html` (`file://` works out of the box, including Folder Auditing).
+- **Optional static server:** Run `portable/launch-local.bat` (Windows) or `portable/launch-local.sh` (Linux) for `http://127.0.0.1:8765/`.
+- **Standalone Repo:** `https://github.com/grantsor/AI-BenchMate-Portable`
+
+### 2. React + Vite Edition (Root `src/` · `AI-BenchMate`)
+Requires Node.js (`v26.13.1` LTS verified):
+```powershell
+npm install
+npm run dev      # Start dev server
+npm run build    # Production build into dist/
+```
+*(In PowerShell with restricted script execution policy, use `npm.cmd install` / `npm.cmd run build`.)*
+
+### Universal State Persistence
+Every configurable setting, theme, unified **Pause Animations / Benchmark Stealth Mode** toggle, active hardware profile, model path, saved presets/models, suite parameters, drawer open/closed state, step completion checkboxes, SSH parameters, and audited/parsed results auto-saves to `localStorage` and `IndexedDB`.
