@@ -1,7 +1,7 @@
 # AI BenchMate — Cross-PC Handoff & Context Document
 
 **Last Updated:** 2026-11-14  
-**Current Phase:** Workspace & Documentation Setup (Pre-Prompt / Pre-GitHub Init)
+**Current Phase:** Setup-First Workflow, Pre-flight Verification & Platform-Filtered Editions (Ready & Pushed)
 
 ---
 
@@ -42,7 +42,6 @@ Everything for **AI BenchMate** (code, plans, architecture notes, and prompt/res
 - **Python:** `3.15.0` (`py --version` -> `Python 3.15.0`)
 - **.NET SDK:** `9.0.310` (`C:\Program Files\dotnet\dotnet.exe`)
 - **Git:** `2.56.0.windows.4`
-- **Git:** `2.56.0.windows.4`
 - **GitHub CLI:** `2.104.0` (`gh`, authenticated as `grantsor`)
 - **Node.js:** `v26.13.1` (`npm` via `npm.cmd` in PowerShell)
 
@@ -57,11 +56,11 @@ Everything for **AI BenchMate** (code, plans, architecture notes, and prompt/res
   1. **Portable Zero-Server Static Edition (`portable/`):** Zero-dependency HTML5 + CSS3 + JS (`benchmate-data.js`, `benchmate-engine.js`, `benchmate-ui.js`), `launch-local.bat`, `launch-local.sh`, runs over `file://` or `py -m http.server`.
   2. **React + Vite Edition (Root `src/`):** `src/App.jsx`, `src/styles.css`, `src/core/benchmate-data.js`, `src/core/benchmate-engine.js`, `package.json`, `vite.config.js`.
 - **Key Implemented Features:**
-  - Minimalist `sparkbench`-inspired 5-tab UI (**System** | **Models** | **Run** | **Results** | **Remote & Setup**) with Light default + Dark + System modes, optional Light Terminal (`#F0EFEA`), and **Option 2A Pause Animations / Benchmark Stealth Mode**.
-  - **Models ("What fits, and at what context"):** Interactive memory Tier & KV fit table showing `Best ctx`, `Total`, `Budget`, and `Headroom` (clickable rows + custom `.gguf` path auto-extractor).
-  - **Run ("Run benchmarks"):** Highlighted outstanding parity benchmarks box (`qwen38-27b`, `qwen36-35b-a3b`), single-run model/suite checkboxes, collapsible `Customize parameters` drawer, proactive Guardrails (`65588 > 65536` trap + VRAM check), and a single clean terminal command preview box.
-  - **Universal Persistence:** All settings, choices, active tab, selected suites, notes, parameter customizer drawer, SSH config, and audit/chart datasets auto-save to `localStorage` + `IndexedDB`.
-  - **Content-Aware Folder Auditor & Results Studio:** `showDirectoryPicker()`, `webkitdirectory`, Drag-and-Drop, Anti-1KB Stub & `aiperf.log` error inspection, collapsible SVG charts, Sample Dataset toggle, `.md`/`.csv` exports, and SSH/Hermes host control in Remote & Setup.
+  - Clean 3-tab workflow (`1. Setup & Pre-flight` | `2. Benchmarks` | `3. Results & Audit`) with Light default + Dark + System modes and Pause Animations / Stealth Mode.
+  - Interactive top header pills (`platform:`, `vram:`, `model:`) as `<select>` switchers synced across tabs.
+  - Proactive always-visible Guardrails bar (`sb-banner-ok` when valid, 8-check validation + 1-click Auto-Fix when invalid).
+  - Universal persistence (`localStorage` + `IndexedDB`) remembering all parameters, custom models, custom presets, UI drawer toggles, and active tab.
+  - Content-Aware Folder Auditor (`showDirectoryPicker()`, `webkitdirectory`, Drag-and-Drop, Anti-1KB Stub & `aiperf.log` check) and clean 6-column Comparison Matrix with SVG charts and `.md`/`.csv` exports.
 - **Reference Docs Archived Inside Repo:**
   - `docs/references/AI Benchmate Prompt.md`
   - `docs/references/DGX Spark vs Radeon AI Pro 9700 — AI Benchmarks & Inference.md`
@@ -75,22 +74,19 @@ Everything for **AI BenchMate** (code, plans, architecture notes, and prompt/res
 
 ## 5. Immediate Next Steps
 
-1. Open `portable/index.html` (or run `npm.cmd run dev` for the React + Vite edition) and optionally test against a real benchmark folder on DGX Spark or Radeon AI Pro R9700.
+1. Open `portable/index.html` (or run `npm.cmd run dev` for the React + Vite edition), run `01 · Pre-flight Check` on `1. Setup & Pre-flight` for your active hardware profile, and execute your benchmark runs on `2. Benchmarks`.
 2. When transferring to another PC, either copy-paste `C:\Users\GadgetPilipinas\Documents\AI BenchMate` or `git clone` either GitHub repository.
 
-## Latest Update (2026-11-14) — Uncluttered 3-Tab Card Layout & Tested-Models-Only Cleanup
+## Latest Update (2026-11-14) — Pre-flight First Workflow, Platform Filtering, Guardrails & Clutter Cleanup
 
-- **Clean 3-Tab Structure (`Benchmarks`, `Results & Audit`, `SSH & Setup`):**
-  - Replaced the fragmented 5-tab split so hardware selection, model picking/adding, and all 7 separate benchmark suites live on the single `Benchmarks` tab without extra tab switches.
-  - **`Benchmarks` Tab:** Compact top toolbar (`Platform`, conditional AMD `Vulkan`/`ROCm HIP`, `VRAM`, `Qwen3.8-27B` / `Qwen3.6-35B-A3B` chips + user custom models with `×`, collapsible `Paths & Naming` drawer, and `.gguf` input + `+ Add Model`), conditional Guardrails banners, 7 separate suite cards (`01 llama-bench` .. `06B AIPerf 64k Sweep`) with individual Terminal 1 (Server) & Terminal 2 (Client) boxes and collapsed-by-default `Parameters ▾` drawers, plus bottom All-in-One Playbook export.
-  - **`Results & Audit` Tab:** Folder Auditor (browse/drop folder or files + deep audit script + 7-row status table) and Comparison Matrix (`Load Sample (DGX vs R9700)`, `.md`/`.json` upload, toggleable SVG charts, `.md`/`.csv` export).
-  - **`SSH & Setup` Tab:** SSH parameters and separate copy-ready terminal cards (`Windows PowerShell SSH Trigger`, `tmux Split Session`, `scp Pull`, `DGX VRAM Sweep`, `Restore start-ai`, and platform setup cards).
-- **Models & Clutter Removed:**
-  - Trimmed `QUICK_MODELS` to only the 2 benchmarked models (`Qwen3.8-27B` and `Qwen3.6-35B-A3B`); future models and parameter presets remain addable dynamically via `.gguf` + `+ Add Model` and `+ Save Preset`.
-  - Removed overlapping suite checkboxes (commands never combine across suites), verbose paragraph blurbs, excess category/duration badges, `Mark Step Complete` buttons, `Filter: Missing Runs Only`, and niche checkboxes.
+- **Workflow-First 3-Tab Order (`1. Setup & Pre-flight` -> `2. Benchmarks` -> `3. Results & Audit`):**
+  - **`1. Setup & Pre-flight` (default tab):** Starts with `01 · Pre-flight Check` (`setup_verify`: checks GPU driver via `nvidia-smi`/`amd-smi`, `llama-bench`/`llama-server`/`speed_bench.py`, active `.gguf` + directory `.gguf` scan, Python + `.venv-aiperf` (`llama_benchy`/`aiperf`/`ray`) + `llmperf/token_benchmark_ray.py` + `.venv-agentperf` (`agentperf-local`), and port `8080` status), followed by `02 · Install Python Venvs & Benchmark Dependencies` (including `aa-agentperf-local`), `03 · Free VRAM`, and `04 · Clear llama-benchy Cache`.
+  - **Strict Platform Filtering:** Selecting any Windows profile (`rtx_spark_win_arm64`, `nvidia_win_x64`, `amd_win_x64`) renders ONLY Windows PowerShell commands (`setup_hermes_dgx`, `pkill`, `tmux`, `DGX VRAM Sweep`, and `start-ai` restore cards are strictly gated to `dgx_spark_linux_arm64`).
+  - **Interactive Header Pills:** `platform:`, `vram:`, and `model:` in the top status bar are clickable `<select class="sb-pill-select">` controls synced 1:1 with the toolbar and persisted in `localStorage` + `IndexedDB`.
+  - **`2. Benchmarks` Tab:** Features a `00 · Pre-flight Check` reminder bar, always-visible Guardrails status/warning bar (`sb-banner-ok` when valid, warning/error + 1-click Auto-Fix across 8 checks: `ctx_aiperf_sweep`, `ctx_benchy`, `ctx_llmperf`, `ctx_speed_bench`, `ctx_aiperf_std`, `sweep_cache_prompt`, `vram_fp16_64k`, `vram_overflow`), `Default` terminology (replacing `"Parity"`), AMD `Enable -fa 1 on Vulkan`, `03 llmperf` quick workload presets (`Default 1024/256` vs `Fast 512/128`), `04 SPEED-Bench` quick context selector (`16K`/`32K`/`64K`/`Custom`) + numeric `-c`, single `Copy Server` / `Copy Command` button per terminal box (none duplicated in `.suite-card-header`), and `Missing / Incomplete Runs Only` playbook export toggle.
+  - **`3. Results & Audit` Tab:** Removed sample preview dataset/buttons from UI; simplified Audit table to 3 columns (`Benchmark`, `Expected Output`, `Status`) with collapsible `Terminal Audit Script`, and formatted Comparison table into 6 readable columns (`Benchmark`, `Platform`, `Model`, `Headline Throughput`, `Latency / Details`, `File`).
 - **Last Verified State:**
-  - `node --check` on `portable/js/benchmate-data.js`, `benchmate-engine.js`, `benchmate-ui.js`: exit 0
-  - Node `vm` + ESM 3-tab UI & 2-model check (`VERIFIED_UI_AND_DATA_CHECKS_PASSED`): exit 0
-  - `node "C:\Program Files\nodejs\node_modules\npm\bin\npm-cli.js" run build` (`vite build`, 32 modules, 467ms): exit 0
+  - `node --check` on `portable/js/benchmate-data.js`, `portable/js/benchmate-engine.js`, `portable/js/benchmate-ui.js`: exit 0
+  - `node "C:\Program Files\nodejs\node_modules\npm\bin\npm-cli.js" run build` (`vite build`, 32 modules, 470ms): exit 0
   - `node scripts\verify-benchmate.mjs`: `ALL AI BENCHMATE VERIFICATION CHECKS PASSED (9/9)`
-
+  - Extended ESM + Node `vm` UI/engine verification (`EXTENDED UI + ENGINE VERIFICATION PASSED (ALL CHECKS OK)`): exit 0

@@ -162,3 +162,37 @@ This file records the chronological conversation prompts, technical decisions, a
   - Vite production build (`npm-cli.js run build`): 32 modules transformed in 467ms.
   - Parity & regression suite (`node scripts\verify-benchmate.mjs`): `ALL AI BENCHMATE VERIFICATION CHECKS PASSED (9/9)`.
 
+
+---
+
+### Entry 11 — Setup-First Tab Order, Pre-flight Verification, Strict Platform Filtering, Expanded Guardrails & Results Cleanup (2026-11-14)
+- **User Prompt Summary:**
+  - Asked where environment/dependency verification (Python venvs, packages, `.gguf` model discovery, binaries) lived and why setup came last instead of first.
+  - Reported seeing unrelated DGX Spark commands while RTX Spark Win-ARM64 was selected.
+  - Requested double-checking `AI Benchmate Prompt.md` for missing features, replacing `"Parity"` with `"Default"`, removing Sample Data and decluttering `Results & Audit` tables, making header pills (`platform:`, `vram:`, `model:`) clickable switchers, restoring always-visible parameter guardrails, and eliminating duplicate Copy buttons in benchmark headers.
+- **Design & Implementation Changes (Synced 1:1 Across `portable/` and Root React+Vite `src/`):**
+  - **1. `1. Setup & Pre-flight` as Tab 1 (`setup` -> `benchmarks` -> `results`):**
+    - Updated `default activeTab` to `"setup"` and added legacy tab migration (`ssh`/`setup`/`remote` -> `"setup"`).
+    - Added `setup_verify` Pre-flight Verification command card (GPU check via `nvidia-smi`/`amd-smi`, binary/script paths, active `.gguf` check + `.gguf` folder scan, Python & venv checks for `.venv-aiperf` (`llama_benchy`, `aiperf`, `ray`), `llmperf/token_benchmark_ray.py`, and `.venv-agentperf` (`agentperf-local`), plus port `8080` status) and included `aa-agentperf-local` install in `setup_env`.
+    - Added a `00 · Pre-flight Check` banner on `2. Benchmarks` linking back to Tab 1.
+  - **2. Strict Platform Filtering on `1. Setup & Pre-flight`:**
+    - Gated `setup_hermes_dgx` (`/models` symlink + Ollama override) and the DGX SSH/`tmux`/`scp`/`start-ai` section strictly to `profile.id === "dgx_spark_linux_arm64"`, eliminating all unrelated Linux/DGX commands when Windows profiles are selected.
+  - **3. Prompt Parity & `"Default"` Terminology:**
+    - Replaced `"Parity"` with `"Default"` across UI labels/buttons (`Default Settings`, `Reset to Defaults`, `Reset to Default`, `Auto (Classic on Default, Stamped on Edit)`).
+    - Added missing prompt controls: `03 llmperf` quick workload presets (`Default (1024 in / 256 out)` vs `Fast (512 in / 128 out)`), `04 SPEED-Bench` quick context selector (`16K`/`32K`/`64K`/`Custom`) synced with Server `-c`, AMD `Enable -fa 1 on Vulkan` checkbox (`amdEnableFa`), and `Missing / Incomplete Runs Only` playbook export toggle.
+  - **4. Interactive Header Pills, Guardrails, Single Copy Buttons & Results Cleanup:**
+    - Converted header `platform:`, `vram:`, and `model:` badges into clickable `<select class="sb-pill-select">` controls.
+    - Rendered `.guardrails-wrap` unconditionally above suite cards (`sb-banner-ok` summary when valid; expanded 8-check `evaluateGuardrails()` warnings + 1-click Auto-Fix buttons when invalid).
+    - Removed duplicate Copy buttons from `.suite-card-header`, leaving a single Copy button inside each terminal bar.
+    - Removed Sample Data buttons/rows from `3. Results & Audit`, simplified the Audit table to 3 columns (`Benchmark`, `Expected Output`, `Status`) with collapsible `Terminal Audit Script`, and formatted the Comparison table to 6 columns (`Benchmark`, `Platform`, `Model`, `Headline Throughput`, `Latency / Details`, `File`).
+- **Files Modified:**
+  - `src/core/benchmate-data.js`, `portable/js/benchmate-data.js`
+  - `src/core/benchmate-engine.js`, `portable/js/benchmate-engine.js`
+  - `src/styles.css`, `portable/css/styles.css`
+  - `portable/js/benchmate-ui.js`, `src/App.jsx`
+  - `docs/HANDOFF.md`, `docs/PROMPT_HISTORY.md`
+- **Verification Results:**
+  - `node --check` on `portable/js/benchmate-data.js`, `portable/js/benchmate-engine.js`, `portable/js/benchmate-ui.js`: exit 0
+  - `node "C:\Program Files\nodejs\node_modules\npm\bin\npm-cli.js" run build` (`vite build`, 32 modules, 470ms): exit 0
+  - `node scripts\verify-benchmate.mjs`: `ALL AI BENCHMATE VERIFICATION CHECKS PASSED (9/9)`
+  - Extended ESM + Node `vm` UI/engine verification (`EXTENDED UI + ENGINE VERIFICATION PASSED (ALL CHECKS OK)`): verified tab order, strict Windows vs DGX Setup filtering, interactive header pills, all 8 guardrails, `Default` terminology, single Copy buttons per terminal bar, `Missing / Incomplete Runs Only` playbook toggle, AMD `-fa 1` toggle, and sample-free `Results & Audit`.

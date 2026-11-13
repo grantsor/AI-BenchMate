@@ -429,8 +429,10 @@ export function createDefaultState() {
       theme: "light",
       lightTerminal: false,
       pauseAnimations: false,
-      activeTab: "benchmarks",
+      activeTab: "setup",
       showPathsAndNaming: false,
+      showDeepAuditScript: false,
+      playbookMissingOnly: false,
       showMissingOnly: false,
       selectedRunSuites: ["aiperf_std", "aiperf_sweep", "speed_bench"],
       runNote: "",
@@ -478,7 +480,7 @@ export function createDefaultState() {
     },
     naming: {
       mode: "auto",
-      activePresetName: "Baseline Parity Defaults"
+      activePresetName: "Default Settings"
     },
     suites: JSON.parse(JSON.stringify(PARITY_DEFAULTS)),
     completedSteps: {},
