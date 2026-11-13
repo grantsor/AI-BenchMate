@@ -107,3 +107,16 @@ This file records the chronological conversation prompts, technical decisions, a
 - Built **Portable Edition** under `portable/` (`index.html`, `css/styles.css`, `js/benchmate-data.js`, `js/benchmate-engine.js`, `js/benchmate-ui.js`, `launch-local.bat`, `launch-local.sh`, `README.md`).
 - Installed Node.js `v26.13.1` LTS and built **React + Vite Edition** in root (`package.json`, `vite.config.js`, `index.html`, `src/main.jsx`, `src/App.jsx`, `src/styles.css`, `src/core/benchmate-data.js`, `src/core/benchmate-engine.js`).
 - Published both public GitHub repositories (`AI-BenchMate` and `AI-BenchMate-Portable`).
+
+---
+
+## Entry 8 — 2026-11-14 (`file://` Auto-Redirect & Synchronous Portable Render Fix)
+
+### User Request
+- Reported that opening root `file:///C:/Users/GadgetPilipinas/Documents/AI%20BenchMate/index.html` directly in a browser showed a blank white page.
+
+### Root Cause & Fixes Applied
+- **Root Cause:** Root [index.html](../../index.html) is the React + Vite source entrypoint (`<script type="module" src="/src/main.jsx"></script>`), which browsers cannot execute over `file://` due to uncompiled JSX and ES module CORS restrictions; the static zero-server edition lives at `portable/index.html`.
+- **Root `index.html` Auto-Redirect:** Added a synchronous `<head>` protocol check in [index.html](../../index.html) that automatically redirects `file://` launches (from root `index.html` or `dist/index.html`) to the Portable Edition while keeping the static module entrypoint intact for `vite dev` / `vite build`.
+- **Synchronous Portable Render:** Updated [portable/js/benchmate-ui.js](../../portable/js/benchmate-ui.js) (`init()`) to call `renderApp()` synchronously before hydrating optional IndexedDB snapshots (and run immediately if `document.readyState !== "loading"`).
+- **Verification:** Re-ran `npm run build` (`32 modules transformed`, `dist/index.html` + `dist/assets/*` emitted cleanly) and `node scripts\verify-benchmate.mjs` (`9/9` checks passed), and pushed updates to both `AI-BenchMate` and `AI-BenchMate-Portable`.
