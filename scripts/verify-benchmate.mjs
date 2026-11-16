@@ -22,6 +22,7 @@ import {
   auditFileList,
   buildAllInOnePlaybook,
   buildServerCommand,
+  buildSetupCards,
   buildSuiteClientCommand,
   evaluateGuardrails,
   exportComparisonCsv,
@@ -150,4 +151,44 @@ assert.ok(winCtx.window.BenchmateEngine.evaluateGuardrails({
   suites: { ...pState.suites, aiperf_sweep: { ...pState.suites.aiperf_sweep, c: 65536 } }
 }).warnings.some((w) => w.id === "ctx_aiperf_sweep"));
 
-console.log("ALL AI BENCHMATE VERIFICATION CHECKS PASSED (9/9)");
+// 10. Verify Setup Cards & Client Commands 1:1 Parity and Scratch-Setup Dependency Order across all 4 profiles
+for (const pid of Object.keys(HARDWARE_PROFILES)) {
+  const sReact = createDefaultState();
+  sReact.hardware.profileId = pid;
+  const sPort = winCtx.window.BenchmateData.createDefaultState();
+  sPort.hardware.profileId = pid;
+
+  const cardsReact = buildSetupCards(sReact);
+  const cardsPort = winCtx.window.BenchmateEngine.buildSetupCards(sPort);
+  assert.equal(JSON.stringify(cardsReact), JSON.stringify(cardsPort), `Setup cards mismatch for ${pid}`);
+
+  const c1 = cardsReact.find((c) => c.id === "setup_verify").cmd;
+  const c2 = cardsReact.find((c) => c.id === "setup_llamacpp").cmd;
+  const c3 = cardsReact.find((c) => c.id === "setup_env").cmd;
+  const c4 = cardsReact.find((c) => c.id === "setup_models").cmd;
+
+  if (pid !== "dgx_spark_linux_arm64") {
+    assert.ok(c1.includes("Get-Command git -ErrorAction SilentlyContinue"), `Card 01 git check missing on ${pid}`);
+    assert.ok(c1.includes("Get-Command py -ErrorAction SilentlyContinue"), `Card 01 py check missing on ${pid}`);
+    assert.ok(c2.includes("winget install --id Git.Git"), `Card 02 winget git missing on ${pid}`);
+    assert.ok(c2.includes("LOCALAPPDATA\\Programs\\Git\\cmd"), `Card 02 user Git path missing on ${pid}`);
+    assert.ok(c2.includes("Microsoft.VCRedist"), `Card 02 VCRedist missing on ${pid}`);
+    assert.ok(c2.includes("https://api.github.com/repos/ggml-org/llama.cpp/releases?per_page=1"), `Card 02 auto binary download missing on ${pid}`);
+    assert.ok(c3.includes("winget install --id Git.Git"), `Card 03 git fallback missing on ${pid}`);
+    assert.ok(c3.includes("Python.Python.3.12"), `Card 03 Python 3.12 missing on ${pid}`);
+    assert.ok(c3.includes("llmperf/archive/refs/heads/main.zip"), `Card 03 llmperf zip fallback missing on ${pid}`);
+    assert.ok(c4.includes("curl.exe -L -C -"), `Card 04 curl fallback missing on ${pid}`);
+  } else {
+    assert.ok(c1.includes("command -v git"), "Linux Card 01 git check missing");
+    assert.ok(c2.includes("sudo apt update && sudo apt install -y build-essential cmake git curl wget"), "Linux Card 02 apt missing");
+    assert.ok(c4.includes("wget -c"), "Linux Card 04 wget fallback missing");
+  }
+
+  for (const suiteId of ["llama_bench", "llama_benchy", "llmperf", "speed_bench", "agentperf", "aiperf_std", "aiperf_sweep"]) {
+    const cliR = buildSuiteClientCommand(sReact, suiteId);
+    const cliP = winCtx.window.BenchmateEngine.buildSuiteClientCommand(sPort, suiteId);
+    assert.equal(cliR, cliP, `Client command mismatch on ${pid} / ${suiteId}`);
+  }
+}
+
+console.log("ALL AI BENCHMATE VERIFICATION CHECKS PASSED (10/10)");

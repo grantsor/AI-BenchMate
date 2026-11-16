@@ -256,3 +256,43 @@ This file records the chronological conversation prompts, technical decisions, a
   - `node "C:\Program Files\nodejs\node_modules\npm\bin\npm-cli.js" run build` (`vite build`, 32 modules, 670ms): exit 0
   - `node scripts\verify-benchmate.mjs`: `ALL AI BENCHMATE VERIFICATION CHECKS PASSED (9/9)`
   - Tooltip & Results Dir verification suite: `ALL TOOLTIP POPUPS & RESULTS DIR VISIBILITY CHECKS PASSED` (exit 0)
+
+
+---
+
+## Entry 14 — Zero-Error From-Scratch Setup Cards (Auto-Git, VC++ Runtime, Auto-Binaries & Dependency Ordering) (2026-11-16)
+
+### User Prompt Summary
+- While testing the app on a brand-new **RTX Spark laptop** (`rtx_spark_win_arm64`), the user pasted Setup Card 01 without issue, then pasted Setup Card 02 (`git clone https://github.com/ggml-org/llama.cpp.git ...`) and hit:
+  `git : The term 'git' is not recognized as the name of a cmdlet, function, script file, or operable program.`
+- Requested:
+  1. Cover `git` installation and `$env:Path` refresh directly in the setup process so commands run from scratch on a clean machine without error.
+  2. Review and improve the proposed Git install/PATH snippet (`$env:Path = ...; if (-not (Get-Command git -ErrorAction SilentlyContinue)) { winget install --id Git.Git ... }`) and apply improvements across all 4 hardware profiles (`dgx_spark_linux_arm64`, `rtx_spark_win_arm64`, `nvidia_win_x64`, `amd_win_x64`).
+  3. Ensure the order of terminal commands across the setup process (`01` -> `02` -> `03` -> `04` -> `05` -> `06` / `07`) and client benchmark commands (`2. Benchmarks`) is dependency-safe and won't fail due to missing tools, missing pre-built `llama.cpp` binaries, missing VC++ Redistributable (`vcruntime140.dll`), or unrefreshed `PATH` variables.
+
+### Key Changes & Files Modified
+1. **Improved `$env:Path` Refresh & Automatic `Git.Git` + VC++ Runtime + Official Pre-Built Binary Provisioning (`src/core/benchmate-engine.js`, `portable/js/benchmate-engine.js`):**
+   - Appended all 3 Windows Git install scopes (`;C:\Program Files\Git\cmd;C:\Program Files (x86)\Git\cmd;$env:LOCALAPPDATA\Programs\Git\cmd`) when refreshing `$env:Path` so both Administrator (`C:\Program Files\Git\cmd`) and non-elevated user-scope (`$env:LOCALAPPDATA\Programs\Git\cmd`) `winget` installs resolve immediately in the active PowerShell session.
+   - **Card `01` (`setup_verify`):** Wrapped `git`, `nvidia-smi` / `amd-smi`, and `py` / `python` in `Get-Command ... -ErrorAction SilentlyContinue` (and `command -v` on Linux) so Card 01 never throws `CommandNotFoundException` on a brand-new machine.
+   - **Card `02` (`setup_llamacpp`):**
+     - Installs `Git.Git` via `winget` if missing and re-refreshes `$env:Path`.
+     - Installs `Microsoft.VCRedist.2015+.arm64` + `Microsoft.VCRedist.2015+.x64` (on `rtx_spark_win_arm64`) or `Microsoft.VCRedist.2015+.x64` (on Windows x64) if `vcruntime140.dll` is missing.
+     - Clones `llama.cpp` (`--depth 1`) for `speed_bench.py`, with an automatic HTTPS `.zip` fallback (`curl.exe -L` + `Expand-Archive`) if `git` is unavailable.
+     - Queries `https://api.github.com/repos/ggml-org/llama.cpp/releases?per_page=1` and automatically downloads + extracts the matching official pre-built `llama-bench.exe`, `llama-server.exe`, and `cudart` / backend DLLs into `${binDir}` (`arm64` CUDA+`cudart` for `rtx_spark_win_arm64`, `x64` CUDA+`cudart` for `nvidia_win_x64`, `vulkan-x64` or `rocm-*-x64` for `amd_win_x64`).
+   - **Card `03` (`setup_env`):**
+     - Includes its own `Git.Git` check + `$env:Path` refresh so it works even if run before Card 02.
+     - Checks explicit filesystem paths (`$env:LOCALAPPDATA\Programs\Python\Python312\python.exe`, `C:\Program Files\Python312\python.exe`, `Python311`) so it never throws `CommandNotFoundException` if `py.exe` is absent, installs `Python.Python.3.12` via `winget` (`--architecture x64` on `rtx_spark_win_arm64`), and re-resolves `$foundPy` directly from disk.
+     - Invokes `& "$venvPy" -m pip install` directly (including `requests tqdm tabulate huggingface_hub` required by `speed_bench.py`) and includes an HTTPS `.zip` fallback for `llmperf`.
+   - **Card `04` (`setup_models`):**
+     - Creates target directories first and uses `.venv-aiperf` `hf_hub_download` if available, with an automatic resumable `curl.exe -L -C -` (Windows) / `wget -c` (Linux) fallback if run before Card 03.
+   - **Benchmark Client Commands (`buildSuiteClientCommand`):**
+     - Prepends `${benchRoot}\.venv-aiperf\Scripts;` (and `.venv-agentperf\Scripts;`) + refreshed Machine/User `PATH` (`export PATH="${benchRoot}/.venv-aiperf/bin:$HOME/.local/bin:$PATH"` on Linux) before `Activate.ps1` / `activate`.
+2. **Verification Suite (`scripts/verify-benchmate.mjs`):**
+   - Added Check #10 verifying 1:1 setup card & client command parity and scratch-setup dependency safety across all 4 hardware profiles (`ALL AI BENCHMATE VERIFICATION CHECKS PASSED (10/10)`).
+
+### Verification Results
+- `node --check portable/js/benchmate-data.js`: exit 0
+- `node --check portable/js/benchmate-engine.js`: exit 0
+- `node --check portable/js/benchmate-ui.js`: exit 0
+- `node "C:\Program Files\nodejs\node_modules\npm\bin\npm-cli.js" run build`: exit 0 (`32 modules transformed`, built in `849ms`)
+- `node scripts\verify-benchmate.mjs`: `ALL AI BENCHMATE VERIFICATION CHECKS PASSED (10/10)` (exit 0)
