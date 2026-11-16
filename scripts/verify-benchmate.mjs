@@ -28,6 +28,7 @@ import {
   exportComparisonCsv,
   exportComparisonMarkdown,
   getOutputTarget,
+  getServerLifecycleInfo,
   loadState,
   parseModelPath,
   parseResultFile,
@@ -174,6 +175,8 @@ for (const pid of Object.keys(HARDWARE_PROFILES)) {
   const c3 = cardsReact.find((c) => c.id === "setup_env").cmd;
   const c4 = cardsReact.find((c) => c.id === "setup_models").cmd;
 
+  assert.ok(c3.includes("agentperf-local") && !c3.includes("aa-agentperf-local"), `PyPI package name must be agentperf-local on ${pid}`);
+
   if (pid !== "dgx_spark_linux_arm64") {
     assert.ok(c1.includes("Get-Command git -ErrorAction SilentlyContinue"), `Card 01 git check missing on ${pid}`);
     assert.ok(c1.includes("Get-Command py -ErrorAction SilentlyContinue"), `Card 01 py check missing on ${pid}`);
@@ -191,10 +194,27 @@ for (const pid of Object.keys(HARDWARE_PROFILES)) {
     assert.ok(c4.includes("wget -c"), "Linux Card 04 wget fallback missing");
   }
 
+  assert.equal(getServerLifecycleInfo(sReact, "llama_bench").mode, "no_server");
+  assert.equal(getServerLifecycleInfo(sReact, "llama_benchy").mode, "start_new");
+  assert.deepEqual(getServerLifecycleInfo(sReact, "llama_benchy").sharedIndices, ["02", "03", "05", "06A"]);
+  assert.equal(getServerLifecycleInfo(sReact, "llmperf").mode, "reuse_prev");
+  assert.equal(getServerLifecycleInfo(sReact, "speed_bench").mode, "relaunch_dedicated");
+  assert.equal(getServerLifecycleInfo(sReact, "agentperf").mode, "relaunch_shared");
+  assert.equal(getServerLifecycleInfo(sReact, "aiperf_std").mode, "reuse_prev");
+  assert.equal(getServerLifecycleInfo(sReact, "aiperf_sweep").mode, "relaunch_dedicated");
+
   for (const suiteId of ["llama_bench", "llama_benchy", "llmperf", "speed_bench", "agentperf", "aiperf_std", "aiperf_sweep"]) {
     const cliR = buildSuiteClientCommand(sReact, suiteId);
     const cliP = winCtx.window.BenchmateEngine.buildSuiteClientCommand(sPort, suiteId);
     assert.equal(cliR, cliP, `Client command mismatch on ${pid} / ${suiteId}`);
+    const srvR = buildServerCommand(sReact, suiteId);
+    const srvP = winCtx.window.BenchmateEngine.buildServerCommand(sPort, suiteId);
+    assert.equal(srvR, srvP, `Server command mismatch on ${pid} / ${suiteId}`);
+    assert.equal(
+      JSON.stringify(getServerLifecycleInfo(sReact, suiteId)),
+      JSON.stringify(winCtx.window.BenchmateEngine.getServerLifecycleInfo(sPort, suiteId)),
+      `Lifecycle info mismatch on ${pid} / ${suiteId}`
+    );
   }
 }
 

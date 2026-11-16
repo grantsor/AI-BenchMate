@@ -19,6 +19,7 @@ import {
   exportComparisonCsv,
   exportComparisonMarkdown,
   getOutputTarget,
+  getServerLifecycleInfo,
   isSuiteCustomized,
   loadSnapshotIDB,
   loadState,
@@ -1418,6 +1419,29 @@ export default function App() {
               )}
             </div>
 
+            <div className="sb-banner sb-lifecycle-guide">
+              <div>
+                <strong>Terminal &amp; Server Lifecycle Guide ({state.model.alias}):</strong>
+                <div className="sb-lifecycle-grid">
+                  <span>
+                    <strong className="sb-lc-tag sb-lc-cyan">01 · llama-bench:</strong> No server (stop Terminal 1 first).
+                  </span>
+                  <span>
+                    <strong className="sb-lc-tag sb-lc-green">02, 03, 05, 06A (Shared 32K Server):</strong> Share the exact same{" "}
+                    <code>llama-server (-c 32768 -np 1)</code> — keep Terminal 1 running across all four!
+                  </span>
+                  <span>
+                    <strong className="sb-lc-tag sb-lc-amber">04 (--jinja) &amp; 06B (-c 70000 q8_0):</strong> Press <code>Ctrl+C</code> in Terminal 1 and relaunch{" "}
+                    <code>llama-server</code> with that card&apos;s Server command.
+                  </span>
+                  <span>
+                    <strong className="sb-lc-tag sb-lc-amber">Switching Models:</strong> Always press <code>Ctrl+C</code> in Terminal 1 and relaunch{" "}
+                    <code>llama-server</code> when changing models.
+                  </span>
+                </div>
+              </div>
+            </div>
+
             <div className="suite-list">
               {SUITE_METADATA.map((meta) => {
                 const modified = isSuiteCustomized(state, meta.id);
@@ -1425,6 +1449,7 @@ export default function App() {
                 const expanded = Boolean(state.ui.expandedDrawers[meta.id]);
                 const serverCmd = meta.hasServer ? buildServerCommand(state, meta.id) : "";
                 const clientCmd = buildSuiteClientCommand(state, meta.id);
+                const lifecycle = getServerLifecycleInfo(state, meta.id);
 
                 return (
                   <div key={meta.id} className="suite-card">
@@ -1435,6 +1460,7 @@ export default function App() {
                         <code className="suite-output-tag" data-tip="hw_resultsDir">
                           -&gt; {target.leaf}
                         </code>
+                        <span className={`sb-badge sb-srv-badge-${lifecycle.tone}`}>{lifecycle.badge}</span>
                         {modified && <span className="sb-badge sb-badge-warn">Modified</span>}
                       </div>
                       <div className="suite-card-actions">
@@ -1468,6 +1494,10 @@ export default function App() {
                           </button>
                         )}
                       </div>
+                    </div>
+
+                    <div className={`suite-lifecycle-bar suite-lifecycle-${lifecycle.tone}`}>
+                      <strong>Server / Terminal Action:</strong> {lifecycle.summary}
                     </div>
 
                     {expanded && <div className="sb-drawer">{renderSuiteDrawerFields(meta.id)}</div>}

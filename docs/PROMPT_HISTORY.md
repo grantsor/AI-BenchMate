@@ -323,3 +323,34 @@ This file records the chronological conversation prompts, technical decisions, a
 - `node --check portable/js/benchmate-ui.js`: exit 0
 - `node "C:\Program Files\nodejs\node_modules\npm\bin\npm-cli.js" run build`: exit 0 (`32 modules transformed`, built in `658ms`)
 - `node scripts\verify-benchmate.mjs`: `ALL AI BENCHMATE VERIFICATION CHECKS PASSED (10/10)` (exit 0)
+
+
+---
+
+## Entry 16 — `agentperf-local` PyPI Package Fix & Live Server / Terminal Lifecycle Guidance (2026-11-16)
+
+### User Prompt Summary
+- While running Setup Card `02` on the RTX Spark laptop, `.venv-aiperf` (`llmperf`, `llama-benchy`, `aiperf`, `crick`) installed cleanly, but the final `.venv-agentperf` step failed with:
+  `ERROR: Could not find a version that satisfies the requirement aa-agentperf-local (from versions: none)`
+- Also noted that in the Benchmark cards (`2. Benchmarks`), there were no instructions on when to kill/stop a server or terminal window (`Ctrl+C`) vs. when to reuse the same running server across different benchmarks (or when switching between models). Requested clear instructions in the app noting which benchmarks share the same terminal server and which require relaunching `llama-server` due to different context windows or flags.
+
+### Key Changes & Files Modified
+1. **Fixed PyPI Package Name (`agentperf-local`) & `huggingface_hub` Version Stability (`src/core/benchmate-engine.js`, `portable/js/benchmate-engine.js`, `src/core/benchmate-data.js`, `portable/js/benchmate-data.js`):**
+   - Verified against PyPI (`https://pypi.org/pypi/agentperf-local/json`) that the published package for `ArtificialAnalysis/aa-agentperf-local` is **`agentperf-local`** (`0.3.4`, `Requires-Python: >=3.12`).
+   - Replaced `aa-agentperf-local` with `agentperf-local` across all 4 hardware profiles in Card `02` (`setup_env`) and added automatic self-healing in Card `04` (`setup_verify`).
+   - Removed `huggingface_hub` from the initial `pip install` in Card `02` and guarded `huggingface_hub<2.0` in Card `03` (`setup_models`) so `aiperf`'s `huggingface-hub 1.33.0` (`<2.0` required by `transformers`) is never uninstalled or conflicted.
+2. **Added Live Server & Terminal Lifecycle Guidance (`src/core/benchmate-engine.js`, `portable/js/benchmate-engine.js`, `src/App.jsx`, `portable/js/benchmate-ui.js`, `src/styles.css`, `portable/css/styles.css`):**
+   - Implemented `getServerConfigSignature(state, suiteId)` and `getServerLifecycleInfo(state, suiteId)` to dynamically compare the exact `llama-server` configuration of each suite against the preceding suite and all other suites.
+   - Added the **Terminal & Server Lifecycle Guide** banner in `2. Benchmarks` summarizing:
+     - **`01 · llama-bench`:** No server (stop Terminal 1 first; command also auto-stops any running `llama-server`).
+     - **`02, 03, 05, 06A` (Shared 32K Server):** All four suites share the exact same `llama-server (-c 32768 -np 1, fp16 KV)` — launch Terminal 1 once and reuse it without restarting.
+     - **`04` (`SPEED-Bench` `--jinja -fa on`) & `06B` (`AIPerf 64k Sweep` `-c 70000 -ctk q8_0 -ctv q8_0`):** Require pressing `Ctrl+C` in Terminal 1 and relaunching `llama-server` with that card's Server command.
+     - **Switching Models:** Always press `Ctrl+C` in Terminal 1 and relaunch `llama-server` when changing models.
+   - Added a live color-coded **Server Action Badge** + **Server / Terminal Action** instruction strip inside every Benchmark Suite Card (`01` through `06B`) and inside the `# [SERVER LIFECYCLE]` comment of `Terminal 1 — Server`.
+
+### Verification Results
+- `node --check portable/js/benchmate-data.js`: exit 0
+- `node --check portable/js/benchmate-engine.js`: exit 0
+- `node --check portable/js/benchmate-ui.js`: exit 0
+- `node "C:\Program Files\nodejs\node_modules\npm\bin\npm-cli.js" run build`: exit 0 (`32 modules transformed`, built in `694ms`)
+- `node scripts\verify-benchmate.mjs`: `ALL AI BENCHMATE VERIFICATION CHECKS PASSED (10/10)` (exit 0)
