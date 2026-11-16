@@ -24,15 +24,20 @@ import {
   buildServerCommand,
   buildSetupCards,
   buildSuiteClientCommand,
+  cleanUserPath,
   evaluateGuardrails,
   exportComparisonCsv,
   exportComparisonMarkdown,
   getOutputTarget,
   getServerLifecycleInfo,
+  inferModelsRootFromInput,
   loadState,
   parseModelPath,
   parseResultFile,
-  saveState
+  reRootModelPath,
+  resolvePickedModelFile,
+  saveState,
+  scanModelFolderEntries
 } from "../src/core/benchmate-engine.js";
 
 // 1. Smart Path Parser tests (Windows & Linux, zero hardcoded usernames)
@@ -218,4 +223,90 @@ for (const pid of Object.keys(HARDWARE_PROFILES)) {
   }
 }
 
-console.log("ALL AI BENCHMATE VERIFICATION CHECKS PASSED (10/10)");
+// 11. Verify LM Studio Windows Default Pathing, Quote Stripping, Folder Scan & Parity
+for (const winPid of ["rtx_spark_win_arm64", "nvidia_win_x64", "amd_win_x64"]) {
+  assert.equal(HARDWARE_PROFILES[winPid].defaultModelsDir, "$env:USERPROFILE\\.lmstudio\\models", `Windows modelsDir mismatch on ${winPid}`);
+  assert.equal(winCtx.window.BenchmateData.HARDWARE_PROFILES[winPid].defaultModelsDir, "$env:USERPROFILE\\.lmstudio\\models");
+}
+
+assert.equal(cleanUserPath('  "C:\\Users\\Alice\\.lmstudio\\models"  '), "C:\\Users\\Alice\\.lmstudio\\models");
+
+const inferredDir = inferModelsRootFromInput('"D:\\AI\\models\\"', "$env:USERPROFILE\\.lmstudio\\models", "windows");
+assert.equal(inferredDir.isDirectoryOnly, true);
+assert.equal(inferredDir.modelsDir, "D:\\AI\\models");
+
+const inferredFile = inferModelsRootFromInput(
+  '"C:\\Users\\Bob\\.lmstudio\\models\\unsloth\\Qwen3.8-27B-GGUF\\Qwen3.8-27B-UD-Q4_K_M.gguf"',
+  "$env:USERPROFILE\\.lmstudio\\models",
+  "windows"
+);
+assert.equal(inferredFile.isDirectoryOnly, false);
+assert.equal(inferredFile.modelsDir, "C:\\Users\\Bob\\.lmstudio\\models");
+
+assert.equal(
+  reRootModelPath(
+    "$env:USERPROFILE\\.lmstudio\\models",
+    "E:\\LMModels",
+    "$env:USERPROFILE\\.lmstudio\\models\\unsloth\\Qwen3.8-27B-GGUF\\Qwen3.8-27B-UD-Q4_K_M.gguf",
+    "\\"
+  ),
+  "E:\\LMModels\\unsloth\\Qwen3.8-27B-GGUF\\Qwen3.8-27B-UD-Q4_K_M.gguf"
+);
+
+// Prevent double-nesting when switching models after selecting a deeply nested GGUF
+const nestedParsed = parseModelPath(
+  "C:\\Users\\Bob\\.lmstudio\\models\\unsloth\\Qwen3.8-27B-GGUF\\Qwen3.8-27B-UD-Q4_K_M.gguf",
+  "C:\\Users\\Bob\\.lmstudio\\models"
+);
+assert.equal(nestedParsed.baseDir, "C:\\Users\\Bob\\.lmstudio\\models");
+assert.equal(nestedParsed.slug, "qwen38");
+
+// Simulate scanning LM Studio \models\ directory (including projectors to ignore, split GGUFs, and custom models)
+const mockScanEntries = [
+  { name: "Qwen3.8-27B-UD-Q4_K_M.gguf", webkitRelativePath: "models/unsloth/Qwen3.8-27B-GGUF/Qwen3.8-27B-UD-Q4_K_M.gguf", size: 17 * 1e9 },
+  { name: "mmproj-F16.gguf", webkitRelativePath: "models/unsloth/Qwen3.8-27B-GGUF/mmproj-F16.gguf", size: 850 * 1e6 },
+  { name: "Qwen3.6-35B-A3B-Q4_K_M.gguf", webkitRelativePath: "models/lmstudio-community/Qwen3.6-35B-A3B-GGUF/Qwen3.6-35B-A3B-Q4_K_M.gguf", size: 22 * 1e9 },
+  { name: "Hermes3.6-00001-of-00002.gguf", webkitRelativePath: "models/HauhauCS/Hermes-GGUF/Hermes3.6-00001-of-00002.gguf", size: 10 * 1e9 },
+  { name: "Hermes3.6-00002-of-00002.gguf", webkitRelativePath: "models/HauhauCS/Hermes-GGUF/Hermes3.6-00002-of-00002.gguf", size: 8 * 1e9 }
+];
+
+const scanState = createDefaultState();
+scanState.hardware.profileId = "rtx_spark_win_arm64";
+scanState.hardware.modelsDir = "C:\\Users\\Tester\\.lmstudio\\models";
+const scanReact = scanModelFolderEntries(mockScanEntries, scanState);
+const scanPort = winCtx.window.BenchmateEngine.scanModelFolderEntries(mockScanEntries, scanState);
+assert.equal(scanReact.status, "ok");
+assert.equal(scanReact.qwen38Found, true);
+assert.equal(scanReact.qwen36Found, true);
+assert.equal(scanReact.skippedProjectors, 1);
+assert.equal(scanReact.foundModels.length, 3);
+assert.ok(scanReact.qwen36Match.fullPath.endsWith("lmstudio-community\\Qwen3.6-35B-A3B-GGUF\\Qwen3.6-35B-A3B-Q4_K_M.gguf"));
+assert.equal(JSON.stringify(scanReact.foundModels), JSON.stringify(scanPort.foundModels));
+
+// Partial and empty scans notify missing models
+const partialScan = scanModelFolderEntries([mockScanEntries[0]], scanState);
+assert.equal(partialScan.status, "partial");
+assert.equal(partialScan.qwen38Found, true);
+assert.equal(partialScan.qwen36Found, false);
+
+const emptyScan = scanModelFolderEntries([mockScanEntries[1]], scanState);
+assert.equal(emptyScan.status, "empty");
+assert.equal(emptyScan.foundModels.length, 0);
+
+// Route 2 single file pick
+const picked = resolvePickedModelFile({ name: "Qwen3.6-35B-A3B-Q4_K_M.gguf", size: 22 * 1e9 }, {
+  ...scanState,
+  discoveredModels: scanReact.foundModels
+});
+assert.equal(picked.matchedScanned, true);
+assert.ok(picked.fullPath.includes("Qwen3.6-35B-A3B-Q4_K_M.gguf"));
+
+// Card 03 on Windows checks .lmstudio\settings.json & recursively scans before downloading missing GGUFs
+const winDefault = createDefaultState();
+winDefault.hardware.profileId = "rtx_spark_win_arm64";
+winDefault.hardware.modelsDir = HARDWARE_PROFILES.rtx_spark_win_arm64.defaultModelsDir;
+const card03Win = buildSetupCards(winDefault).find((c) => c.id === "setup_models").cmd;
+assert.ok(card03Win.includes("settings.json") && card03Win.includes("downloadsFolder"));
+assert.ok(card03Win.includes('Get-ChildItem -Path $modelRoot -Filter "*.gguf" -Recurse'));
+
+console.log("ALL AI BENCHMATE VERIFICATION CHECKS PASSED (11/11)");

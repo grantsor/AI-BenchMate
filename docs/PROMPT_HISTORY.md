@@ -354,3 +354,37 @@ This file records the chronological conversation prompts, technical decisions, a
 - `node --check portable/js/benchmate-ui.js`: exit 0
 - `node "C:\Program Files\nodejs\node_modules\npm\bin\npm-cli.js" run build`: exit 0 (`32 modules transformed`, built in `694ms`)
 - `node scripts\verify-benchmate.mjs`: `ALL AI BENCHMATE VERIFICATION CHECKS PASSED (10/10)` (exit 0)
+
+
+---
+
+## Entry 17 — Windows LM Studio Default Paths (`$env:USERPROFILE\.lmstudio\models`), Recursive `\models\` Folder Scanner & Conditional Card `03` Download (2026-11-16)
+
+### User Prompt Summary
+- Requested updating Windows model pathing to match LM Studio's default Windows download location (`C:\Users\<Username>\.lmstudio\models`), kept completely portable across any PC/username (using `$env:USERPROFILE\.lmstudio\models` rather than hardcoding any user folder).
+- Requested two flexible ways to locate/pick `.gguf` models plus live found/not-found notifications:
+  1. **Route 1 (Recommended — Point `\models\` Root Folder):** Automatically scan all subfolders to detect `Qwen3.8-27B`, `Qwen3.6-35B-A3B`, and any other runnable `.gguf` models on disk, notify if found or missing, and integrate all detected models into the benchmark selectors.
+  2. **Route 2 (Select Exact `.gguf` File):** Pick or paste an exact `.gguf` file path directly.
+- Requested that if the user skips manual LM Studio downloads / scanning, Setup Card `03` (`setup_models`) checks the `\models\` directory first and downloads only missing GGUF files.
+
+### Key Changes & Files Modified
+1. **Portable Windows LM Studio Defaults & Path Separation (`src/core/benchmate-data.js`, `portable/js/benchmate-data.js`, `src/core/benchmate-engine.js`, `portable/js/benchmate-engine.js`):**
+   - Updated `defaultModelsDir` on `rtx_spark_win_arm64`, `nvidia_win_x64`, and `amd_win_x64` to `"$env:USERPROFILE\\.lmstudio\\models"`.
+   - Added dedicated `state.hardware.modelsDir`, `state.modelScan`, and `state.discoveredModels` fields alongside `HELP_TOOLTIPS` entries (`hw_modelsDir`, `btn_scanModelsDir`, `btn_selectModelFile`).
+   - Added `cleanUserPath`, `stripTrailingSep`, `inferModelsRootFromInput`, `reRootModelPath`, and updated `parseModelPath(rawPath, overrideModelsRoot)` to prevent double-nesting (`\unsloth\...\unsloth\...`), strip Explorer quotes (`"C:\..."`), and migrate legacy `$HOME\.lmstudio\models` paths cleanly in `loadState`.
+2. **Recursive Folder Scanner & Single-File Resolver (`src/core/benchmate-engine.js`, `portable/js/benchmate-engine.js`):**
+   - Implemented `scanModelFolderEntries(entries, state)` (filters out `mmproj-*`/`mtp-*`/`projector*`/`draft*`, groups multi-part split GGUFs `-00001-of-0000N.gguf`, ranks & binds `Qwen3.8-27B` and `Qwen3.6-35B-A3B` across publishers/quants, integrates all extra discovered models, and emits structured `ok` / `partial` / `empty` status notifications).
+   - Implemented `resolvePickedModelFile(fileObj, state)` for Route 2 single `.gguf` picking.
+   - Updated Setup Card `03` (`setup_models`) on Windows to inspect `$env:USERPROFILE\.lmstudio\settings.json` (`downloadsFolder`) and recursively scan `$modelRoot` (`Get-ChildItem -Filter "*.gguf" -Recurse`) BEFORE downloading missing parity GGUFs, and updated Card `04` (`setup_verify`) accordingly.
+   - Updated `computeModelFitRows` to include `state.discoveredModels`.
+3. **Dual-Route UI Controls & Discovery Notification Banners (`src/App.jsx`, `portable/js/benchmate-ui.js`, `src/styles.css`, `portable/css/styles.css`):**
+   - Added `Models Root Folder (\models\)` field, `Scan \models\ Folder` (`<input webkitdirectory>` compatible with both `file://` and HTTP), `Select .gguf File`, smart paste/blur detection for quoted `.gguf` and `\models\` folder paths, discovered model chips/dropdown integration, and live `[FOUND]` / `[PARTIAL]` / `[NOT FOUND]` notification banners in both `1. Setup & Pre-flight` and `2. Benchmarks`.
+4. **Verification Suite (`scripts/verify-benchmate.mjs`):**
+   - Added Check #11 verifying all Windows profiles' portable `$env:USERPROFILE\.lmstudio\models` default, quote stripping, root inference, re-rooting, anti-double-nesting, recursive `\models\` scanning (`mmproj` filtering + split-shard grouping + partial/empty status), Route 2 single-file resolution, Card `03` `.lmstudio\settings.json` + recursive scan check, and 1:1 React/Portable parity.
+
+### Verification Results
+- `node --check portable/js/benchmate-data.js`: exit 0
+- `node --check portable/js/benchmate-engine.js`: exit 0
+- `node --check portable/js/benchmate-ui.js`: exit 0
+- `node "C:\Program Files\nodejs\node_modules\npm\bin\npm-cli.js" run build`: exit 0 (`32 modules transformed`, built in `713ms`)
+- `node scripts\verify-benchmate.mjs`: `ALL AI BENCHMATE VERIFICATION CHECKS PASSED (11/11)` (exit 0)

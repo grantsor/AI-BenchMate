@@ -15,18 +15,24 @@ import {
   buildSetupCards,
   buildSshCommands,
   buildSuiteClientCommand,
+  cleanUserPath,
   evaluateGuardrails,
   exportComparisonCsv,
   exportComparisonMarkdown,
   getOutputTarget,
   getServerLifecycleInfo,
+  inferModelsRootFromInput,
   isSuiteCustomized,
   loadSnapshotIDB,
   loadState,
   parseModelPath,
   parseResultFile,
+  reRootModelPath,
+  resolvePickedModelFile,
   saveSnapshotIDB,
-  saveState
+  saveState,
+  scanModelFolderEntries,
+  stripTrailingSep
 } from "./core/benchmate-engine.js";
 
 function renderHighlightedLine(line, lineIdx) {
@@ -334,34 +340,408 @@ export default function App() {
   const profile = HARDWARE_PROFILES[state.hardware.profileId];
   const isDgx = profile.id === "dgx_spark_linux_arm64";
   const tab = state.ui.activeTab || "setup";
-  const allModels = [...QUICK_MODELS, ...(state.customModels || [])];
+  const normalizePathCmp = (v) => String(v || "").trim().replace(/^["']+|["']+$/g, "").toLowerCase();
+
+  const discoveredModels = state.discoveredModels || [];
+  const qwen38Match = state.modelScan?.qwen38Match || null;
+  const qwen36Match = state.modelScan?.qwen36Match || null;
+  const scanStatus = state.modelScan?.status || "idle";
+
+  const quickModelChoices = QUICK_MODELS.map((m) => {
+    const match = m.id === "qwen38_27b" ? qwen38Match : m.id === "qwen36_35b_moe" ? qwen36Match : null;
+    if (match) {
+      return {
+        ...m,
+        fullPath: match.fullPath,
+        filename: match.filename || m.filename,
+        relativeWin: match.relativeWin || m.relativeWin,
+        relativeLinux: match.relativeLinux || m.relativeLinux,
+        weightGb: Number(match.weightGb) || m.weightGb,
+        paramsB: Number(match.paramsB) || m.paramsB,
+        tokenizer: match.tokenizer || m.tokenizer,
+        fromScan: true,
+        scanFound: true
+      };
+    }
+    return {
+      ...m,
+      scanMissing: scanStatus === "partial" || scanStatus === "empty"
+    };
+  });
+
+  const extraDiscoveredModels = discoveredModels.filter((m) => {
+    const p = normalizePathCmp(m.fullPath);
+    if (qwen38Match && p === normalizePathCmp(qwen38Match.fullPath)) return false;
+    if (qwen36Match && p === normalizePathCmp(qwen36Match.fullPath)) return false;
+    if ((state.customModels || []).some((cm) => normalizePathCmp(cm.fullPath) === p)) return false;
+    return true;
+  });
+
+  const allModels = [...quickModelChoices, ...extraDiscoveredModels, ...(state.customModels || [])];
+
+  const resolveModelChoicePath = (m, hw = state.hardware) => {
+    if (m.fullPath) return m.fullPath;
+    const prof = HARDWARE_PROFILES[hw.profileId] || HARDWARE_PROFILES.rtx_spark_win_arm64;
+    const isWin = prof.os === "windows";
+    const sep = isWin ? "\\" : "/";
+    const root = stripTrailingSep(hw.modelsDir || prof.defaultModelsDir);
+    const rel = String(isWin ? (m.relativeWin || m.filename || m.relativeLinux) : (m.relativeLinux || m.filename || m.relativeWin) || "").replace(/^[\\/]+/, "");
+    return root + sep + rel;
+  };
+
+  const hasExactPathMatch = allModels.some(
+    (m) => normalizePathCmp(resolveModelChoicePath(m)) === normalizePathCmp(state.model.fullPath)
+  );
+
+  const isModelChoiceActive = (m) => {
+    if (hasExactPathMatch) {
+      return normalizePathCmp(resolveModelChoicePath(m)) === normalizePathCmp(state.model.fullPath);
+    }
+    return !m.fromScan && (state.model.slug === m.slug || state.model.alias === m.alias);
+  };
 
   const handleSelectModel = (modelObj) => {
     updateState((prev) => {
-      const p = HARDWARE_PROFILES[prev.hardware.profileId];
+      const p = HARDWARE_PROFILES[prev.hardware.profileId] || HARDWARE_PROFILES.rtx_spark_win_arm64;
       const isWin = p.os === "windows";
       const sep = isWin ? "\\" : "/";
-      const cleanBase = String(prev.model.baseDir || p.defaultModelsDir).replace(/[\\/]+$/, "");
+      const cleanRoot = stripTrailingSep(prev.hardware.modelsDir || p.defaultModelsDir);
       const rel = isWin
         ? modelObj.relativeWin || modelObj.filename || modelObj.relativeLinux
         : modelObj.relativeLinux || modelObj.filename || modelObj.relativeWin;
       const cleanRel = String(rel || "").replace(/^[\\/]+/, "");
-      const fullPath = modelObj.fullPath ? modelObj.fullPath : cleanBase + sep + cleanRel;
+      const fullPath = modelObj.fullPath ? cleanUserPath(modelObj.fullPath) : cleanRoot + sep + cleanRel;
+      const parsed = parseModelPath(fullPath, cleanRoot);
       return {
         ...prev,
         model: {
           ...prev.model,
-          fullPath,
-          baseDir: cleanBase,
-          filename: cleanRel.split(/[\\/]/).pop() || cleanRel,
-          alias: modelObj.alias,
-          slug: modelObj.slug,
-          tokenizer: modelObj.tokenizer,
-          weightGb: Number(modelObj.weightGb) || 15.8,
-          paramsB: Number(modelObj.paramsB) || 27
+          fullPath: parsed.fullPath || fullPath,
+          baseDir: cleanRoot,
+          filename: parsed.filename || cleanRel.split(/[\\/]/).pop() || cleanRel,
+          alias: modelObj.alias || parsed.alias,
+          slug: modelObj.slug || parsed.slug,
+          tokenizer: modelObj.tokenizer || parsed.tokenizer,
+          weightGb: Number(modelObj.weightGb) || parsed.weightGb || 15.8,
+          paramsB: Number(modelObj.paramsB) || parsed.paramsB || 27
         }
       };
     });
+  };
+
+  const handleModelsDirChange = (rawInput, applyInfer = false) => {
+    updateState((prev) => {
+      const p = HARDWARE_PROFILES[prev.hardware.profileId] || HARDWARE_PROFILES.rtx_spark_win_arm64;
+      const sep = p.os === "windows" ? "\\" : "/";
+      const cleaned = cleanUserPath(rawInput);
+      const oldRoot = stripTrailingSep(prev.hardware.modelsDir || p.defaultModelsDir);
+
+      if (applyInfer || /\.gguf$/i.test(cleaned)) {
+        const inferred = inferModelsRootFromInput(cleaned, oldRoot, p.os);
+        const newRoot = inferred.modelsDir || stripTrailingSep(cleaned);
+        const nextFull = !inferred.isDirectoryOnly && /\.gguf$/i.test(inferred.cleanPath)
+          ? inferred.cleanPath
+          : reRootModelPath(oldRoot, newRoot, prev.model.fullPath, sep);
+        const parsed = parseModelPath(nextFull, newRoot);
+        const nextDiscovered = (prev.discoveredModels || []).map((dm) => ({
+          ...dm,
+          fullPath: reRootModelPath(oldRoot, newRoot, dm.fullPath, sep)
+        }));
+        return {
+          ...prev,
+          hardware: { ...prev.hardware, modelsDir: newRoot },
+          model: { ...prev.model, ...parsed, baseDir: newRoot },
+          discoveredModels: nextDiscovered
+        };
+      }
+
+      const newRoot = stripTrailingSep(cleaned);
+      if (!newRoot) {
+        return { ...prev, hardware: { ...prev.hardware, modelsDir: "" } };
+      }
+      const nextFull = reRootModelPath(oldRoot, newRoot, prev.model.fullPath, sep);
+      const parsed = parseModelPath(nextFull, newRoot);
+      const nextDiscovered = (prev.discoveredModels || []).map((dm) => ({
+        ...dm,
+        fullPath: reRootModelPath(oldRoot, newRoot, dm.fullPath, sep)
+      }));
+      return {
+        ...prev,
+        hardware: { ...prev.hardware, modelsDir: newRoot },
+        model: { ...prev.model, ...parsed, baseDir: newRoot },
+        discoveredModels: nextDiscovered
+      };
+    });
+  };
+
+  const handleModelPathChange = (rawInput, inferFolderIfNeeded = false) => {
+    updateState((prev) => {
+      const p = HARDWARE_PROFILES[prev.hardware.profileId] || HARDWARE_PROFILES.rtx_spark_win_arm64;
+      const sep = p.os === "windows" ? "\\" : "/";
+      const cleaned = cleanUserPath(rawInput);
+      const currentRoot = stripTrailingSep(prev.hardware.modelsDir || p.defaultModelsDir);
+
+      if (inferFolderIfNeeded && cleaned && !/\.gguf$/i.test(cleaned)) {
+        const inferred = inferModelsRootFromInput(cleaned, currentRoot, p.os);
+        if (inferred.isDirectoryOnly && inferred.modelsDir) {
+          const newRoot = inferred.modelsDir;
+          const nextFull = reRootModelPath(currentRoot, newRoot, prev.model.fullPath, sep);
+          const parsed = parseModelPath(nextFull, newRoot);
+          return {
+            ...prev,
+            hardware: { ...prev.hardware, modelsDir: newRoot },
+            model: { ...prev.model, ...parsed, baseDir: newRoot },
+            modelScan: {
+              ...(prev.modelScan || {}),
+              status: prev.modelScan?.status || "idle",
+              note: `Folder path detected -> updated Models Root Folder to "${newRoot}". Click "Scan \\models\\ Folder" to inspect GGUF files inside.`
+            }
+          };
+        }
+      }
+
+      const isCompleteGguf = /\.gguf$/i.test(cleaned);
+      if (!isCompleteGguf) {
+        return {
+          ...prev,
+          model: { ...prev.model, fullPath: cleaned }
+        };
+      }
+
+      const inferred = inferModelsRootFromInput(cleaned, currentRoot, p.os);
+      const nextRoot = inferred.modelsDir || currentRoot;
+      const parsed = parseModelPath(cleaned, nextRoot);
+      return {
+        ...prev,
+        hardware: { ...prev.hardware, modelsDir: nextRoot },
+        model: {
+          ...prev.model,
+          ...parsed,
+          baseDir: nextRoot
+        }
+      };
+    });
+  };
+
+  const handleScanModelsFolder = (fileList) => {
+    if (!fileList || fileList.length === 0) return;
+    const scan = scanModelFolderEntries(fileList, state);
+    updateState((prev) => {
+      let nextModel = prev.model;
+      const activeCmp = normalizePathCmp(prev.model.fullPath);
+      const exactInScan = scan.foundModels.find((m) => normalizePathCmp(m.fullPath) === activeCmp);
+      let targetMatch = exactInScan || null;
+      if (!targetMatch) {
+        if (/qwen3\.?8/i.test(prev.model.slug || prev.model.alias || "") && scan.qwen38Match) {
+          targetMatch = scan.qwen38Match;
+        } else if (/qwen3\.?6/i.test(prev.model.slug || prev.model.alias || "") && scan.qwen36Match) {
+          targetMatch = scan.qwen36Match;
+        } else if (!exactInScan && scan.foundModels.length > 0 && !scan.qwen38Found && !scan.qwen36Found) {
+          targetMatch = scan.foundModels[0];
+        }
+      }
+      if (targetMatch) {
+        const root = stripTrailingSep(prev.hardware.modelsDir);
+        const parsed = parseModelPath(targetMatch.fullPath, root);
+        nextModel = {
+          ...prev.model,
+          ...parsed,
+          baseDir: root || parsed.baseDir,
+          alias: targetMatch.alias || parsed.alias,
+          slug: targetMatch.slug || parsed.slug,
+          tokenizer: targetMatch.tokenizer || parsed.tokenizer,
+          weightGb: Number(targetMatch.weightGb) || parsed.weightGb,
+          paramsB: Number(targetMatch.paramsB) || parsed.paramsB
+        };
+      }
+      return {
+        ...prev,
+        model: nextModel,
+        discoveredModels: scan.foundModels,
+        modelScan: {
+          status: scan.status,
+          note: scan.note,
+          scannedRootName: scan.scannedRootName,
+          scannedAt: scan.scannedAt,
+          qwen38Found: scan.qwen38Found,
+          qwen36Found: scan.qwen36Found,
+          qwen38Match: scan.qwen38Match,
+          qwen36Match: scan.qwen36Match,
+          skippedProjectors: scan.skippedProjectors
+        }
+      };
+    });
+  };
+
+  const handleSelectModelFile = (fileList) => {
+    const file = fileList && fileList[0];
+    if (!file) return;
+    const picked = resolvePickedModelFile(file, state);
+    if (!picked) return;
+    updateState((prev) => {
+      const root = stripTrailingSep(picked.baseDir || prev.hardware.modelsDir);
+      const parsed = parseModelPath(picked.fullPath, root);
+      const nextModel = {
+        ...prev.model,
+        fullPath: parsed.fullPath || picked.fullPath,
+        baseDir: picked.baseDir || prev.hardware.modelsDir,
+        filename: picked.filename || parsed.filename,
+        alias: picked.alias || parsed.alias,
+        slug: picked.slug || parsed.slug,
+        tokenizer: picked.tokenizer || parsed.tokenizer,
+        paramsB: Number(picked.paramsB) || parsed.paramsB,
+        weightGb: Number(picked.weightGb) || parsed.weightGb
+      };
+      const existingDiscovered = prev.discoveredModels || [];
+      const alreadyListed = existingDiscovered.some((d) => normalizePathCmp(d.fullPath) === normalizePathCmp(nextModel.fullPath));
+      const nextDiscovered = alreadyListed
+        ? existingDiscovered
+        : [
+            ...existingDiscovered,
+            {
+              id: "picked_" + (nextModel.slug || Date.now()),
+              label: nextModel.alias,
+              alias: nextModel.alias,
+              slug: nextModel.slug,
+              fullPath: nextModel.fullPath,
+              filename: nextModel.filename,
+              tokenizer: nextModel.tokenizer,
+              paramsB: nextModel.paramsB,
+              weightGb: nextModel.weightGb,
+              fromScan: true
+            }
+          ];
+      return {
+        ...prev,
+        model: nextModel,
+        discoveredModels: nextDiscovered,
+        modelScan: {
+          ...(prev.modelScan || {}),
+          status: prev.modelScan?.status && prev.modelScan.status !== "idle" ? prev.modelScan.status : "picked",
+          note: picked.note || `Selected GGUF file: ${nextModel.fullPath}`
+        }
+      };
+    });
+  };
+
+  const handleClearModelScan = () => {
+    updateState((prev) => ({
+      ...prev,
+      discoveredModels: [],
+      modelScan: { status: "idle", note: "", scannedRootName: "", scannedAt: "", qwen38Found: false, qwen36Found: false, qwen38Match: null, qwen36Match: null, skippedProjectors: 0 }
+    }));
+  };
+
+  const jumpToModelSetupCard = () => {
+    updateState((p) => ({ ...p, ui: { ...p.ui, activeTab: "setup" } }));
+    setTimeout(() => {
+      const el = document.getElementById("setup-card-setup_models") || document.querySelector('[data-card-id="setup_models"]');
+      if (el) el.scrollIntoView({ behavior: "smooth", block: "center" });
+    }, 60);
+  };
+
+  const renderModelStatusBanner = (compact = false) => {
+    const scan = state.modelScan || {};
+    const status = scan.status || "idle";
+    const foundCount = discoveredModels.length;
+
+    if (status === "empty") {
+      return (
+        <div className="sb-banner sb-banner-danger sb-model-banner" role="status">
+          <div className="sb-model-banner-text">
+            <strong>[NOT FOUND] No runnable GGUF models found{scan.scannedRootName ? ` in "${scan.scannedRootName}"` : ""}.</strong>{" "}
+            <span>{scan.note || "Run Card 03 in Setup to download missing Qwen3.8-27B & Qwen3.6-35B-A3B models."}</span>
+          </div>
+          <div className="sb-model-banner-actions">
+            {tab !== "setup" && (
+              <button type="button" className="btn btn-xs btn-primary" onClick={jumpToModelSetupCard}>
+                Go to Card 03 Download
+              </button>
+            )}
+            <button type="button" className="btn btn-xs btn-outline" onClick={handleClearModelScan}>
+              Dismiss
+            </button>
+          </div>
+        </div>
+      );
+    }
+
+    if (status === "partial") {
+      const missingList = [
+        !scan.qwen38Found ? "Qwen3.8-27B" : null,
+        !scan.qwen36Found ? "Qwen3.6-35B-A3B" : null
+      ].filter(Boolean);
+      return (
+        <div className="sb-banner sb-banner-warn sb-model-banner" role="status">
+          <div className="sb-model-banner-text">
+            <strong>
+              [PARTIAL: {foundCount} GGUF{foundCount === 1 ? "" : "s"}]{" "}
+              {missingList.length ? `Missing: ${missingList.join(", ")}.` : "Found local models."}
+            </strong>{" "}
+            <span>{scan.note}</span>
+          </div>
+          <div className="sb-model-banner-actions">
+            {tab !== "setup" && missingList.length > 0 && (
+              <button type="button" className="btn btn-xs btn-primary" onClick={jumpToModelSetupCard}>
+                Download Missing (Card 03)
+              </button>
+            )}
+            <button type="button" className="btn btn-xs btn-outline" onClick={handleClearModelScan}>
+              Clear Scan
+            </button>
+          </div>
+        </div>
+      );
+    }
+
+    if (status === "ok") {
+      return (
+        <div className="sb-banner sb-banner-ok sb-model-banner" role="status">
+          <div className="sb-model-banner-text">
+            <strong>[FOUND: {foundCount} GGUF{foundCount === 1 ? "" : "s"}]</strong>{" "}
+            <span>{scan.note || "Qwen3.8-27B & Qwen3.6-35B-A3B detected and integrated into benchmark selectors."}</span>
+          </div>
+          <div className="sb-model-banner-actions">
+            <button type="button" className="btn btn-xs btn-outline" onClick={handleClearModelScan}>
+              Clear Scan
+            </button>
+          </div>
+        </div>
+      );
+    }
+
+    if (status === "picked" || scan.note) {
+      return (
+        <div className="sb-banner sb-banner-ok sb-model-banner" role="status">
+          <div className="sb-model-banner-text">
+            <strong>[MODEL PATH]</strong> <span>{scan.note}</span>
+          </div>
+          <div className="sb-model-banner-actions">
+            <button
+              type="button"
+              className="btn btn-xs btn-outline"
+              onClick={() => document.getElementById("react-scan-models-dir-input")?.click()}
+            >
+              Scan \models\ Folder
+            </button>
+            <button type="button" className="btn btn-xs btn-outline" onClick={handleClearModelScan}>
+              Dismiss
+            </button>
+          </div>
+        </div>
+      );
+    }
+
+    if (compact) return null;
+    return (
+      <div className="sb-banner sb-banner-info sb-model-banner" role="status">
+        <div className="sb-model-banner-text">
+          <strong>Route 1 (Recommended):</strong> Click{" "}
+          <code>Scan \models\ Folder</code> and select your LM Studio <code>models</code> folder to auto-detect Qwen3.8, Qwen3.6, and all other <code>.gguf</code> models in subfolders — or use{" "}
+          <code>Select .gguf File</code>. If skipped, Card 03 scans your folder first and downloads only missing files.
+        </div>
+      </div>
+    );
   };
 
   const handleChangeProfile = (newProfileId) => {
@@ -370,22 +750,26 @@ export default function App() {
       const nextProfile = HARDWARE_PROFILES[newProfileId];
       if (!nextProfile) return prev;
       const sep = nextProfile.os === "windows" ? "\\" : "/";
-      const matched = allModels.find(
+      const sameOs = prevProfile.os === nextProfile.os;
+      const nextModelsDir = sameOs
+        ? stripTrailingSep(prev.hardware.modelsDir || nextProfile.defaultModelsDir)
+        : nextProfile.defaultModelsDir;
+      const matched = [...QUICK_MODELS, ...(prev.discoveredModels || []), ...(prev.customModels || [])].find(
         (m) => m.slug === prev.model.slug || m.alias === prev.model.alias
       );
-      let nextModel = { ...prev.model, baseDir: nextProfile.defaultModelsDir };
-      if (matched && matched.relativeWin && matched.relativeLinux) {
+      let nextModel = { ...prev.model, baseDir: nextModelsDir };
+      if (matched && matched.relativeWin && matched.relativeLinux && !matched.fromScan) {
         const rel = nextProfile.os === "windows" ? matched.relativeWin : matched.relativeLinux;
-        nextModel.fullPath = nextProfile.defaultModelsDir + sep + rel;
+        nextModel.fullPath = nextModelsDir + sep + rel;
         nextModel.filename = rel.split(/[\\/]/).pop() || rel;
         nextModel.alias = matched.alias;
         nextModel.slug = matched.slug;
         nextModel.tokenizer = matched.tokenizer;
         nextModel.weightGb = matched.weightGb;
         nextModel.paramsB = matched.paramsB;
-      } else if (prevProfile.os !== nextProfile.os) {
+      } else if (!sameOs) {
         const fileOnly = String(prev.model.fullPath || prev.model.filename || "").split(/[\\/]/).pop();
-        nextModel.fullPath = nextProfile.defaultModelsDir + sep + fileOnly;
+        nextModel.fullPath = nextModelsDir + sep + fileOnly;
         nextModel.filename = fileOnly;
       }
       return {
@@ -398,9 +782,14 @@ export default function App() {
           repoDir: nextProfile.defaultRepoDir,
           benchRoot: nextProfile.defaultBenchRoot,
           resultsDir: nextProfile.defaultResultsDir,
+          modelsDir: nextModelsDir,
           nvidiaDevice: nextProfile.deviceFlag || "CUDA0"
         },
-        model: nextModel
+        model: nextModel,
+        discoveredModels: sameOs ? (prev.discoveredModels || []) : [],
+        modelScan: sameOs
+          ? prev.modelScan
+          : { status: "idle", note: "", scannedRootName: "", scannedAt: "", qwen38Found: false, qwen36Found: false, qwen38Match: null, qwen36Match: null, skippedProjectors: 0 }
       };
     });
   };
@@ -783,7 +1172,7 @@ export default function App() {
   const baseVram = [16, 24, 32, 48, 64, 96, 128];
   const curVram = Number(state.hardware.vramGb) || 32;
   const vramList = baseVram.includes(curVram) ? baseVram : [...baseVram, curVram].sort((a, b) => a - b);
-  const matchedModel = allModels.find((m) => m.slug === state.model.slug || m.alias === state.model.alias);
+  const matchedModel = allModels.find((m) => isModelChoiceActive(m));
 
   const sshCmds = isDgx ? buildSshCommands(state) : null;
   const dgxRemoteCards = isDgx
@@ -797,6 +1186,32 @@ export default function App() {
 
   return (
     <div className="sb-container">
+      <input
+        id="react-scan-models-dir-input"
+        type="file"
+        multiple
+        ref={(el) => {
+          if (el) {
+            el.webkitdirectory = true;
+            el.directory = true;
+          }
+        }}
+        style={{ display: "none" }}
+        onChange={(e) => {
+          handleScanModelsFolder(e.target.files);
+          e.target.value = "";
+        }}
+      />
+      <input
+        id="react-select-model-file-input"
+        type="file"
+        accept=".gguf"
+        style={{ display: "none" }}
+        onChange={(e) => {
+          handleSelectModelFile(e.target.files);
+          e.target.value = "";
+        }}
+      />
       <header className="sb-header">
         <div className="sb-brand-cluster">
           <span className="sb-brand">ai-benchmate</span>
@@ -923,32 +1338,71 @@ export default function App() {
                   <input type="text" className="sb-input" value={state.hardware.resultsDir} onChange={(e) => updateState((p) => ({ ...p, hardware: { ...p.hardware, resultsDir: e.target.value } }))} />
                 </div>
                 <div className="sb-field">
+                  <label data-tip="hw_modelsDir">Models Root Folder (\models\)</label>
+                  <input
+                    type="text"
+                    className="sb-input"
+                    value={state.hardware.modelsDir || ""}
+                    onChange={(e) => handleModelsDirChange(e.target.value, false)}
+                    onBlur={(e) => handleModelsDirChange(e.target.value, true)}
+                  />
+                </div>
+                <div className="sb-field">
                   <label data-tip="model_fullPath">Active Model (.gguf)</label>
                   <input
                     type="text"
                     className="sb-input"
                     value={state.model.fullPath}
-                    onChange={(e) => {
-                      const val = e.target.value;
-                      const parsed = parseModelPath(val);
-                      updateState((p) => ({
-                        ...p,
-                        model: {
-                          ...p.model,
-                          fullPath: val,
-                          baseDir: parsed.baseDir,
-                          filename: parsed.filename,
-                          alias: parsed.alias,
-                          slug: parsed.slug,
-                          tokenizer: parsed.tokenizer,
-                          weightGb: parsed.weightGb,
-                          paramsB: parsed.paramsB
-                        }
-                      }));
+                    onChange={(e) => handleModelPathChange(e.target.value, false)}
+                    onBlur={(e) => handleModelPathChange(e.target.value, true)}
+                    onPaste={(e) => {
+                      const pasted = e.clipboardData?.getData("text");
+                      if (pasted) {
+                        e.preventDefault();
+                        handleModelPathChange(pasted, true);
+                      }
                     }}
                   />
                 </div>
               </div>
+
+              <div className="sb-model-actions">
+                <button
+                  type="button"
+                  className="btn btn-sm btn-primary"
+                  data-tip="btn_scanModelsDir"
+                  onClick={() => document.getElementById("react-scan-models-dir-input")?.click()}
+                >
+                  Scan \models\ Folder
+                </button>
+                <button
+                  type="button"
+                  className="btn btn-sm btn-outline"
+                  data-tip="btn_selectModelFile"
+                  onClick={() => document.getElementById("react-select-model-file-input")?.click()}
+                >
+                  Select .gguf File
+                </button>
+                <div className="sb-pill-row">
+                  {allModels.map((m) => {
+                    const active = isModelChoiceActive(m);
+                    return (
+                      <button
+                        key={`setup-model-${m.id}`}
+                        type="button"
+                        className={`sb-chip ${active ? "active" : ""} ${m.scanFound ? "is-found" : ""} ${m.scanMissing ? "is-missing" : ""}`}
+                        onClick={() => handleSelectModel(m)}
+                        title={m.fullPath || m.relativeWin || m.relativeLinux || m.alias}
+                      >
+                        {m.scanFound ? "[Found] " : m.scanMissing ? "[Missing] " : m.fromScan ? "[Scan] " : ""}
+                        {m.label || m.alias}
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+
+              {renderModelStatusBanner(false)}
 
               {profile.id === "rtx_spark_win_arm64" && (
                 <div className="sb-inline-row" style={{ marginTop: "10px" }}>
@@ -987,7 +1441,7 @@ export default function App() {
 
             <div className="ssh-stack">
               {setupCards.map((c) => (
-                <div key={c.id} className="sb-terminal-wrap">
+                <div key={c.id} id={`setup-card-${c.id}`} data-card-id={c.id} className="sb-terminal-wrap">
                   <div className="sb-terminal-bar">
                     <span data-tip={c.id}>{c.title}</span>
                     <button
@@ -1116,16 +1570,46 @@ export default function App() {
                 </label>
 
                 <div className="sb-pill-row">
-                  {QUICK_MODELS.map((m) => {
-                    const active = state.model.slug === m.slug || state.model.alias === m.alias;
+                  {quickModelChoices.map((m) => {
+                    const active = isModelChoiceActive(m);
                     return (
-                      <button key={m.id} type="button" className={`sb-chip ${active ? "active" : ""}`} onClick={() => handleSelectModel(m)}>
+                      <button
+                        key={m.id}
+                        type="button"
+                        className={`sb-chip ${active ? "active" : ""} ${m.scanFound ? "is-found" : ""} ${m.scanMissing ? "is-missing" : ""}`}
+                        onClick={() => handleSelectModel(m)}
+                        title={m.fullPath || m.relativeWin || m.relativeLinux || m.alias}
+                      >
+                        {m.scanFound ? "[Found] " : m.scanMissing ? "[Missing] " : ""}
                         {m.label}
                       </button>
                     );
                   })}
+                  {extraDiscoveredModels.map((m) => {
+                    const active = isModelChoiceActive(m);
+                    return (
+                      <span key={m.id} className="sb-chip-group">
+                        <button
+                          type="button"
+                          className={`sb-chip is-found ${active ? "active" : ""}`}
+                          onClick={() => handleSelectModel(m)}
+                          title={m.fullPath || m.alias}
+                        >
+                          [Scan] {m.label || m.alias}
+                        </button>
+                        <button
+                          type="button"
+                          className="sb-chip-x"
+                          title="Remove scanned model"
+                          onClick={() => updateState((p) => ({ ...p, discoveredModels: (p.discoveredModels || []).filter((x) => x.id !== m.id) }))}
+                        >
+                          &times;
+                        </button>
+                      </span>
+                    );
+                  })}
                   {(state.customModels || []).map((m) => {
-                    const active = state.model.slug === m.slug || state.model.alias === m.alias;
+                    const active = isModelChoiceActive(m);
                     return (
                       <span key={m.id} className="sb-chip-group">
                         <button type="button" className={`sb-chip ${active ? "active" : ""}`} onClick={() => handleSelectModel(m)}>
@@ -1155,37 +1639,54 @@ export default function App() {
               </div>
 
               <div className="config-model-row">
+                <label className="sb-field-inline" style={{ flex: 0.9, minWidth: "200px" }} data-tip="hw_modelsDir">
+                  <span>Models Root</span>
+                  <input
+                    type="text"
+                    className="sb-input sb-input-wide"
+                    value={state.hardware.modelsDir || ""}
+                    onChange={(e) => handleModelsDirChange(e.target.value, false)}
+                    onBlur={(e) => handleModelsDirChange(e.target.value, true)}
+                  />
+                </label>
                 <label className="sb-field-inline" style={{ flex: 1.3, minWidth: "240px" }} data-tip="model_fullPath">
                   <span>Model (.gguf)</span>
                   <input
                     type="text"
                     className="sb-input sb-input-wide"
                     value={state.model.fullPath}
-                    onChange={(e) => {
-                      const val = e.target.value;
-                      const parsed = parseModelPath(val);
-                      updateState((p) => ({
-                        ...p,
-                        model: {
-                          ...p.model,
-                          fullPath: val,
-                          baseDir: parsed.baseDir,
-                          filename: parsed.filename,
-                          alias: parsed.alias,
-                          slug: parsed.slug,
-                          tokenizer: parsed.tokenizer,
-                          weightGb: parsed.weightGb,
-                          paramsB: parsed.paramsB
-                        }
-                      }));
+                    onChange={(e) => handleModelPathChange(e.target.value, false)}
+                    onBlur={(e) => handleModelPathChange(e.target.value, true)}
+                    onPaste={(e) => {
+                      const pasted = e.clipboardData?.getData("text");
+                      if (pasted) {
+                        e.preventDefault();
+                        handleModelPathChange(pasted, true);
+                      }
                     }}
                   />
                 </label>
                 <button
                   type="button"
+                  className="btn btn-sm btn-primary"
+                  data-tip="btn_scanModelsDir"
+                  onClick={() => document.getElementById("react-scan-models-dir-input")?.click()}
+                >
+                  Scan \models\ Folder
+                </button>
+                <button
+                  type="button"
+                  className="btn btn-sm btn-outline"
+                  data-tip="btn_selectModelFile"
+                  onClick={() => document.getElementById("react-select-model-file-input")?.click()}
+                >
+                  Select .gguf File
+                </button>
+                <button
+                  type="button"
                   className="btn btn-sm btn-outline"
                   onClick={() => {
-                    const parsed = parseModelPath(state.model.fullPath);
+                    const parsed = parseModelPath(state.model.fullPath, state.hardware.modelsDir);
                     const alias = state.model.alias || parsed.alias;
                     const slug = state.model.slug || parsed.slug;
                     const entry = {
@@ -1196,17 +1697,17 @@ export default function App() {
                       tokenizer: state.model.tokenizer || parsed.tokenizer,
                       weightGb: Number(state.model.weightGb) || parsed.weightGb,
                       paramsB: Number(state.model.paramsB) || parsed.paramsB,
-                      fullPath: state.model.fullPath
+                      fullPath: parsed.fullPath || state.model.fullPath
                     };
                     updateState((p) => ({
                       ...p,
-                      customModels: [...(p.customModels || []).filter((m) => m.slug !== slug && m.alias !== alias), entry]
+                      customModels: [...(p.customModels || []).filter((m) => normalizePathCmp(m.fullPath) !== normalizePathCmp(entry.fullPath)), entry]
                     }));
                   }}
                 >
                   + Add Model
                 </button>
-                <label className="sb-field-inline" style={{ flex: 1, minWidth: "220px" }} data-tip="hw_resultsDir">
+                <label className="sb-field-inline" style={{ flex: 0.9, minWidth: "200px" }} data-tip="hw_resultsDir">
                   <span>Results Dir</span>
                   <input
                     type="text"
@@ -1217,9 +1718,21 @@ export default function App() {
                 </label>
               </div>
 
+              {renderModelStatusBanner(false)}
+
               {state.ui.showPathsAndNaming && (
                 <div className="sb-drawer">
                   <div className="sb-form-grid">
+                    <div className="sb-field">
+                      <label data-tip="hw_modelsDir">Models Root Folder</label>
+                      <input
+                        type="text"
+                        className="sb-input"
+                        value={state.hardware.modelsDir || ""}
+                        onChange={(e) => handleModelsDirChange(e.target.value, false)}
+                        onBlur={(e) => handleModelsDirChange(e.target.value, true)}
+                      />
+                    </div>
                     <div className="sb-field">
                       <label data-tip="hw_binDir">Llama Bin Dir</label>
                       <input type="text" className="sb-input" value={state.hardware.binDir} onChange={(e) => updateState((p) => ({ ...p, hardware: { ...p.hardware, binDir: e.target.value } }))} />

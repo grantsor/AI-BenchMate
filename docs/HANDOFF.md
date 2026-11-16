@@ -1,7 +1,7 @@
 # AI BenchMate — Cross-PC Handoff & Context Document
 
 **Last Updated:** 2026-11-16  
-**Current Phase:** `agentperf-local` PyPI Fix, Live Server & Terminal Lifecycle Guidance (`getServerLifecycleInfo`), Action-First Setup Cards & Hover Tooltips (Ready & Pushed)
+**Current Phase:** Portable Windows LM Studio Default Pathing (`$env:USERPROFILE\.lmstudio\models`), Dual-Route Model Folder Scanner + Single-File Picker, Smart Card `03` Conditional Download & Model Discovery Notifications (Ready & Pushed)
 
 ---
 
@@ -58,15 +58,21 @@ Everything for **AI BenchMate** (code, plans, architecture notes, and prompt/res
   2. **React + Vite Edition (Root `src/`):** `src/App.jsx`, `src/styles.css`, `src/core/benchmate-data.js`, `src/core/benchmate-engine.js`, `package.json`, `vite.config.js`.
 - **Key Implemented Features:**
   - Clean 3-tab workflow (`1. Setup & Pre-flight` | `2. Benchmarks` | `3. Results & Audit`) with Light default + Dark + System modes and Pause Animations / Stealth Mode.
+  - **Portable LM Studio Windows Default Pathing & Dual-Route Model Discovery (`$env:USERPROFILE\.lmstudio\models`):**
+    - All Windows hardware profiles (`rtx_spark_win_arm64`, `nvidia_win_x64`, `amd_win_x64`) default `defaultModelsDir` and `hardware.modelsDir` to portable **`$env:USERPROFILE\.lmstudio\models`** (never hardcoding any PC username; legacy `$HOME\.lmstudio\models` or nested paths migrate cleanly in `loadState`).
+    - **Route 1 (Recommended — `Scan \models\ Folder`):** Recursively scans any pointed LM Studio `\models\` directory via `<input webkitdirectory>` (`scanModelFolderEntries`) over both `file://` and HTTP, ignoring non-LLM helpers (`mmproj-*`, `mtp-*`, `projector*`, `draft*`), grouping multi-part split GGUFs (`-00001-of-0000N.gguf`), matching `Qwen3.8-27B` and `Qwen3.6-35B-A3B` across publishers (`unsloth`, `lmstudio-community`, etc.) and quant variants, and integrating ALL discovered `.gguf` models directly into the model chips, header dropdown, and VRAM Fit estimator.
+    - **Route 2 (`Select .gguf File` / Smart Paste):** Pick any specific `.gguf` file via `resolvePickedModelFile` or paste Explorer paths with surrounding quotes (`cleanUserPath`, `inferModelsRootFromInput`, `reRootModelPath`), automatically extracting `modelsDir` when a `\models\` folder or nested `.gguf` path is pasted without corrupting `baseDir`.
+    - **Live Model Discovery Status Banner (`[FOUND]` / `[PARTIAL]` / `[NOT FOUND]`):** Clearly notifies which parity and custom GGUFs were found or missing, with one-click navigation to **Setup Card `03`** (`setup_models`) when any default model needs downloading.
+    - **Setup Card `03` Conditional Pre-Scan & Download:** Automatically inspects `.lmstudio\settings.json` (`downloadsFolder`) and recursively scans `$modelRoot` for runnable `.gguf` files (>500 MB) BEFORE downloading, printing `[FOUND]` for existing models and downloading only missing parity GGUFs.
   - **Live Server & Terminal Lifecycle Guidance (`getServerLifecycleInfo`):**
-    - Displays a top **Terminal & Server Lifecycle Guide** banner in `2. Benchmarks` plus a live color-coded **Server Action Badge** (`NO SERVER · STOP TERMINAL 1 IF RUNNING`, `LAUNCH SERVER IN TERMINAL 1 · SHARED BY 02, 03, 05, 06A`, `REUSE SERVER FROM 02 · DO NOT RESTART TERMINAL 1`, `MUST RELAUNCH SERVER · -c 70000, q8_0/q8_0 KV`) and **Server / Terminal Action** instruction bar on every Benchmark Suite Card (`01` through `06B`), as well as inside the copied `Terminal 1 — Server` header comments.
+    - Displays a top **Terminal & Server Lifecycle Guide** banner in `2. Benchmarks` plus live color-coded **Server Action Badges** and instruction bars on every Benchmark Suite Card (`01` through `06B`).
     - Dynamically compares each suite's live `llama-server` configuration signature (`getServerConfigSignature`) so customizing any server parameter automatically updates whether Terminal 1 can be reused or must be stopped (`Ctrl+C`) and relaunched.
-    - Suite `01 · Native C++ llama-bench` automatically prepends `Stop-Process -Name "llama-server" -Force -ErrorAction SilentlyContinue` / `pkill -u "$USER" -9 -f "llama-server"` so it never runs while a background server is holding VRAM.
+    - Suite `01 · Native C++ llama-bench` automatically prepends `Stop-Process -Name "llama-server"` / `pkill -f "llama-server"` so it never runs while a background server is holding VRAM.
   - **Action-First From-Scratch Setup Cards (`01` → `07`) — Zero Passive `[ACTION NEEDED]` Checks:**
-    - **Card `01 · Install & Verify Git, VC++ Runtime, llama.cpp Binaries & SPEED-Bench` (`setup_llamacpp`):** Runs FIRST. Auto-installs `Git.Git` and Microsoft VC++ Redistributable (`vcruntime140.dll`), clones `llama.cpp` (`speed_bench.py`), and automatically downloads & extracts `llama-bench.exe`, `llama-server.exe`, and `ggml-cuda.dll` / `cudart` / Vulkan / ROCm DLLs into `${binDir}` via fast `tar.exe -xf`.
-    - **Card `02 · Install & Verify Python 3.12, Venvs & Benchmark Suites` (`setup_env`):** Runs SECOND. Auto-installs `Python.Python.3.12` via `winget`, creates `.venv-aiperf` & `.venv-agentperf`, clones & patches `llmperf` (`<3.11` stripped), and installs `llama-benchy`, `aiperf` (with automatic fallback to base `aiperf`), and `agentperf-local` (exact PyPI package name `agentperf-local`, v0.3.4).
-    - **Card `03 · Download & Verify Benchmark GGUF Models` (`setup_models`):** Runs THIRD. Auto-downloads `Qwen3.8-27B-UD-Q4_K_M.gguf` and `Qwen3.6-35B-A3B-UD-Q4_K_M.gguf` via `.venv-aiperf` `hf_hub_download` without upgrading `huggingface_hub` past `transformers`'s `<2.0` constraint.
-    - **Card `04 · Complete Pre-Flight Verification & Self-Healing Check` (`setup_verify`):** Runs FOURTH. Self-heals missing Git, `llama.cpp` binaries, or `agentperf-local`, clears `~/.cache/llama-benchy`, and checks port `8080`.
+    - **Card `01 · setup_llamacpp`:** Auto-installs `Git.Git`, VC++ Redistributable, clones `llama.cpp`, and downloads pre-built `llama-bench` / `llama-server` binaries into `${binDir}`.
+    - **Card `02 · setup_env`:** Auto-installs Python 3.12, `.venv-aiperf` (`llmperf`, `aiperf`, `llama-benchy`), and `.venv-agentperf` (`agentperf-local`).
+    - **Card `03 · setup_models`:** Reads `.lmstudio\settings.json`, scans recursively for existing GGUFs, and downloads only missing parity models (`Qwen3.8-27B` / `Qwen3.6-35B-A3B`).
+    - **Card `04 · setup_verify`:** Self-healing pre-flight check using `modelsDir` + recursive fallback lookup.
   - **Interactive Hover Tooltip Popups (`HELP_TOOLTIPS` + `#sb-floating-tooltip`):** Instant multi-line floating tooltip popups on all checkboxes, card/suite/section titles, hardware/path/model/SSH fields, and every benchmark parameter.
   - **Always-Visible `Results Dir` (Default Benchmark Results Folder):** Displayed and editable across all 3 tabs alongside the single `Select Folder` button in `3. Results & Audit`.
   - Interactive top header pills (`platform:`, `vram:`, `model:`), always-visible Guardrails bar, and universal `localStorage` + `IndexedDB` persistence.
@@ -85,17 +91,14 @@ Everything for **AI BenchMate** (code, plans, architecture notes, and prompt/res
 
 ## 5. Immediate Next Steps
 
-1. On your RTX Spark laptop, run `& "$HOME\benchmarks\.venv-agentperf\Scripts\python.exe" -m pip install --upgrade pip setuptools wheel agentperf-local` to finish the `.venv-agentperf` step from Card `02`, then proceed to Card `03` (Models) and `2. Benchmarks`.
+1. In `1. Setup & Pre-flight` or `2. Benchmarks`, click **`Scan \models\ Folder`** and select your Windows LM Studio `models` directory (`C:\Users\<Username>\.lmstudio\models`) to verify instant detection of your existing GGUF models, OR skip straight to Setup Card **`03`** to auto-scan and download any missing parity `.gguf` files.
 2. Follow the live **Server / Terminal Action** badges on each Benchmark Suite Card (`01` through `06B`).
 
-## Latest Update (2026-11-16) — `agentperf-local` PyPI Package Fix & Live Server Lifecycle Guidance
+## Latest Update (2026-11-16) — LM Studio Windows Default Paths, Recursive `\models\` Scanner & Smart Card `03` Download
 
-- **Fixed PyPI Package Name for AA-AgentPerf-Local (`agentperf-local`):**
-  - Replaced `aa-agentperf-local` (GitHub repo name) with the exact PyPI package name **`agentperf-local`** (`v0.3.4`) across all setup cards (`setup_env` and `setup_verify` self-healing) in `src/core/benchmate-engine.js` and `portable/js/benchmate-engine.js`.
-  - Removed redundant `huggingface_hub` upgrade from Card `02`/`03` so `aiperf`'s `huggingface-hub 1.33.0` (`<2.0` required by `transformers`) stays intact without uninstall/reinstall churn.
-- **Added Live Server & Terminal Lifecycle Guidance (`getServerLifecycleInfo`):**
-  - Added top **Terminal & Server Lifecycle Guide** banner in `2. Benchmarks` plus live per-card **Server Action Badges** (`NO SERVER`, `LAUNCH SERVER · SHARED BY 02, 03, 05, 06A`, `REUSE SERVER FROM 02 · DO NOT RESTART TERMINAL 1`, `RELAUNCH SERVER`, `MUST RELAUNCH SERVER`) and instruction bars on every suite card (`01`–`06B`).
+- **Portable LM Studio Windows Default Path:** Changed Windows `defaultModelsDir` from `$HOME\models` to **`$env:USERPROFILE\.lmstudio\models`** across `rtx_spark_win_arm64`, `nvidia_win_x64`, and `amd_win_x64` (`loadState` migrates legacy `$HOME\.lmstudio\models` and repairs accidental double-nested `\unsloth\...\unsloth\...` paths).
+- **Dual-Route Model Picker & Recursive Folder Discovery (`Scan \models\ Folder` & `Select .gguf File`):** Added dedicated `hardware.modelsDir`, Explorer quote stripping, `inferModelsRootFromInput`, `reRootModelPath`, `scanModelFolderEntries` (recursive GGUF discovery with `mmproj`/`mtp` filtering and split-shard grouping), `resolvePickedModelFile`, live `[FOUND]`/`[PARTIAL]`/`[NOT FOUND]` banners, and conditional Setup Card `03` pre-scan (`downloadsFolder` + `Get-ChildItem -Recurse`).
 - **Last Verified State:**
   - `node --check` on `portable/js/benchmate-data.js`, `portable/js/benchmate-engine.js`, `portable/js/benchmate-ui.js`: exit 0
-  - `node "C:\Program Files\nodejs\node_modules\npm\bin\npm-cli.js" run build` (`vite build`, 32 modules, 694ms): exit 0
-  - `node scripts\verify-benchmate.mjs`: `ALL AI BENCHMATE VERIFICATION CHECKS PASSED (10/10)`
+  - `node "C:\Program Files\nodejs\node_modules\npm\bin\npm-cli.js" run build` (`vite build`, 32 modules, 713ms): exit 0
+  - `node scripts\verify-benchmate.mjs`: `ALL AI BENCHMATE VERIFICATION CHECKS PASSED (11/11)` (exit 0)
