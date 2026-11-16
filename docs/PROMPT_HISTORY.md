@@ -296,3 +296,30 @@ This file records the chronological conversation prompts, technical decisions, a
 - `node --check portable/js/benchmate-ui.js`: exit 0
 - `node "C:\Program Files\nodejs\node_modules\npm\bin\npm-cli.js" run build`: exit 0 (`32 modules transformed`, built in `849ms`)
 - `node scripts\verify-benchmate.mjs`: `ALL AI BENCHMATE VERIFICATION CHECKS PASSED (10/10)` (exit 0)
+
+
+---
+
+## Entry 15 — Action-First Setup Card Ordering (`01` Engine -> `02` Python -> `03` Models -> `04` Self-Healing Verify) & Auto-Binary Extraction (2026-11-16)
+
+### User Prompt Summary
+- After pasting the old Card 02 on the RTX Spark laptop, the user received:
+  `[ACTION NEEDED] Missing C:\llama.cpp\cuda\llama-bench.exe — extract llama.cpp release into C:\llama.cpp\cuda`
+  `[ACTION NEEDED] Missing C:\llama.cpp\cuda\llama-server.exe — extract llama.cpp release into C:\llama.cpp\cuda`
+- Emphasized that the setup code must NOT merely check if files are missing and output `[ACTION NEEDED]` or `[MISSING]`—every setup step must take automatic action when anything is missing so there are zero errors from the get-go, and the setup cards must be in the proper execution order.
+
+### Key Changes & Files Modified
+1. **Reordered Setup Cards into Strict Action-First Sequence (`01` → `02` → `03` → `04`) (`src/core/benchmate-engine.js`, `portable/js/benchmate-engine.js`, `src/core/benchmate-data.js`, `portable/js/benchmate-data.js`):**
+   - **Card `01` (`setup_llamacpp`):** Runs FIRST. Refreshes `$env:Path` (including `C:\Program Files\Git\cmd`, `C:\Program Files (x86)\Git\cmd`, and `$env:LOCALAPPDATA\Programs\Git\cmd`), auto-installs `Git.Git` and `Microsoft.VCRedist` via `winget`, clones `llama.cpp` (`speed_bench.py`) with HTTPS `.zip` fallback, and automatically downloads + extracts the official `ggml-org/llama.cpp` release binaries (`llama-bench.exe`, `llama-server.exe`, `ggml-cuda.dll` / `ggml-vulkan.dll` / `ggml-hip.dll`, and `cudart` DLLs) into `C:\llama.cpp\...` using `tar.exe -xf` (with `Expand-Archive` fallback) and `-Headers @{"User-Agent"="ai-benchmate"}`.
+   - **Card `02` (`setup_env`):** Runs SECOND. Auto-installs Python 3.12 (`--architecture x64` on `rtx_spark_win_arm64`), creates `.venv-aiperf` & `.venv-agentperf`, clones & patches `llmperf`, and installs `llama-benchy`, `aiperf` (with automatic fallback to base `aiperf` if C++ build tools are absent), and `aa-agentperf-local`.
+   - **Card `03` (`setup_models`):** Runs THIRD. Auto-downloads `Qwen3.8-27B-UD-Q4_K_M.gguf` and `Qwen3.6-35B-A3B-UD-Q4_K_M.gguf` via `.venv-aiperf` `hf_hub_download` (with resumable `curl.exe -L -C -` / `wget -c` fallback).
+   - **Card `04` (`setup_verify`):** Runs FOURTH. Performs a full self-healing readiness check (automatically installing Git, cloning `llama.cpp`, or downloading release binaries if any are still missing), clears `~/.cache/llama-benchy`, and checks port `8080`.
+2. **Verification Suite (`scripts/verify-benchmate.mjs`):**
+   - Verified `cards[0].id === "setup_llamacpp"`, `cards[1].id === "setup_env"`, `cards[2].id === "setup_models"`, `cards[3].id === "setup_verify"`, and confirmed zero `[ACTION NEEDED]` strings exist in any card (`10/10` checks passed).
+
+### Verification Results
+- `node --check portable/js/benchmate-data.js`: exit 0
+- `node --check portable/js/benchmate-engine.js`: exit 0
+- `node --check portable/js/benchmate-ui.js`: exit 0
+- `node "C:\Program Files\nodejs\node_modules\npm\bin\npm-cli.js" run build`: exit 0 (`32 modules transformed`, built in `658ms`)
+- `node scripts\verify-benchmate.mjs`: `ALL AI BENCHMATE VERIFICATION CHECKS PASSED (10/10)` (exit 0)

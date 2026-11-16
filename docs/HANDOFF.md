@@ -1,7 +1,7 @@
 # AI BenchMate — Cross-PC Handoff & Context Document
 
 **Last Updated:** 2026-11-16  
-**Current Phase:** Zero-Error From-Scratch Setup Cards (Auto-Git, VC++ Runtime, Auto-Binaries, Safe PATH Refresh), Hover Tooltips & Results Dir (Ready & Pushed)
+**Current Phase:** Action-First Setup Card Ordering (`01` Engine -> `02` Python/Venvs -> `03` Models -> `04` Self-Healing Verify), Auto-Binary Provisioning & Hover Tooltips (Ready & Pushed)
 
 ---
 
@@ -58,11 +58,11 @@ Everything for **AI BenchMate** (code, plans, architecture notes, and prompt/res
   2. **React + Vite Edition (Root `src/`):** `src/App.jsx`, `src/styles.css`, `src/core/benchmate-data.js`, `src/core/benchmate-engine.js`, `package.json`, `vite.config.js`.
 - **Key Implemented Features:**
   - Clean 3-tab workflow (`1. Setup & Pre-flight` | `2. Benchmarks` | `3. Results & Audit`) with Light default + Dark + System modes and Pause Animations / Stealth Mode.
-  - **Zero-Error From-Scratch Setup Cards (`01`–`07`):**
-    - **Card `01` (`setup_verify`):** Refreshes `$env:Path` (including system, x86, and user-scope `$env:LOCALAPPDATA\Programs\Git\cmd`), and safely checks `git`, `nvidia-smi`/`amd-smi`, and `py`/`python` using `Get-Command ... -ErrorAction SilentlyContinue` (`command -v` on Linux) so it never throws `CommandNotFoundException` on a fresh machine.
-    - **Card `02` (`setup_llamacpp`):** Automatically installs `Git.Git` via `winget` + refreshes `$env:Path` across all 3 Git install locations, installs Microsoft VC++ Redistributable (`Microsoft.VCRedist.2015+.arm64` + `x64` on `rtx_spark_win_arm64`, `x64` on Windows x64) if `vcruntime140.dll` is missing, clones `llama.cpp` with an automatic HTTPS `.zip` archive fallback (`curl.exe -L` + `Expand-Archive`), and automatically queries the official `ggml-org/llama.cpp` GitHub rolling releases API (`releases?per_page=1`) to download and extract `llama-bench.exe`, `llama-server.exe`, and matching `cudart` / backend DLLs into `${binDir}`.
-    - **Card `03` (`setup_env`):** Includes its own `Git.Git` check, checks explicit filesystem paths (`$env:LOCALAPPDATA\Programs\Python\Python312\python.exe`, `C:\Program Files\Python312\python.exe`, `Python311`) so it never fails if `py.exe` is missing, installs `Python.Python.3.12` via `winget` (`--architecture x64` on `rtx_spark_win_arm64`), reloads `$env:Path` + `$foundPy`, invokes `& "$venvPy" -m pip install` directly (including `requests tqdm tabulate huggingface_hub` for `speed_bench.py`), clones `llmperf` with an HTTPS `.zip` fallback, patches `pyproject.toml` and `setup.py`, and installs `.venv-agentperf`.
-    - **Card `04` (`setup_models`):** Creates target model directories first and uses `.venv-aiperf` `hf_hub_download` if available, with an automatic resumable `curl.exe -L -C -` (Windows) / `wget -c` (Linux) fallback if run before Card 03.
+  - **Action-First From-Scratch Setup Cards (`01` → `07`) — Zero Passive `[ACTION NEEDED]` Checks:**
+    - **Card `01 · Install & Verify Git, VC++ Runtime, llama.cpp Binaries & SPEED-Bench` (`setup_llamacpp`):** Runs FIRST. Refreshes `$env:Path` across all 3 Git install scopes (`C:\Program Files\Git\cmd`, `C:\Program Files (x86)\Git\cmd`, `$env:LOCALAPPDATA\Programs\Git\cmd`), auto-installs `Git.Git` and Microsoft VC++ Redistributable (`vcruntime140.dll`) via `winget`, clones `llama.cpp` (`speed_bench.py`) with HTTPS `.zip` fallback, and automatically queries `https://api.github.com/repos/ggml-org/llama.cpp/releases?per_page=1` (`-Headers @{"User-Agent"="ai-benchmate"}`) to download and extract `llama-bench.exe`, `llama-server.exe`, and `ggml-cuda.dll` / `cudart` / Vulkan / ROCm DLLs into `${binDir}` via fast `tar.exe -xf` (or `Expand-Archive` fallback).
+    - **Card `02 · Install & Verify Python 3.12, Venvs & Benchmark Suites` (`setup_env`):** Runs SECOND. Auto-installs `Python.Python.3.12` via `winget` (`--architecture x64` on `rtx_spark_win_arm64`), creates `.venv-aiperf` & `.venv-agentperf`, clones & patches `llmperf` (`<3.11` stripped), and installs `llama-benchy`, `aiperf` (with automatic fallback to base `aiperf` if `crick` C++ build tools are absent), and `aa-agentperf-local`.
+    - **Card `03 · Download & Verify Benchmark GGUF Models` (`setup_models`):** Runs THIRD. Creates target model folders and automatically downloads `Qwen3.8-27B-UD-Q4_K_M.gguf` and `Qwen3.6-35B-A3B-UD-Q4_K_M.gguf` via `.venv-aiperf` `hf_hub_download` (or resumable `curl.exe -L -C -` / `wget -c` fallback).
+    - **Card `04 · Complete Pre-Flight Verification & Self-Healing Check` (`setup_verify`):** Runs FOURTH. Verifies GPU, Git, `llama-bench`, `llama-server`, `speed_bench.py`, `.gguf` models, and venv packages—and automatically installs/downloads any missing Git, repo, or release binary on the spot, clears `~/.cache/llama-benchy`, and checks port `8080`.
   - **Interactive Hover Tooltip Popups (`HELP_TOOLTIPS` + `#sb-floating-tooltip`):** Instant multi-line floating tooltip popups on all checkboxes, card/suite/section titles, hardware/path/model/SSH fields, and every benchmark parameter (`-ngl`, `-fa`, `Server -c`, `-ctk`, `--pp`, `--depth`, `--isl`, etc.) showing meaning, description, and default/recommended values.
   - **Always-Visible `Results Dir` (Default Benchmark Results Folder):** Displayed and editable in the top grid on `1. Setup & Pre-flight`, in `.config-model-row` on `2. Benchmarks`, and as a `Default Results Folder:` bar (with 1-click `Copy Path`) in `3. Results & Audit` alongside the single `Select Folder` button.
   - Interactive top header pills (`platform:`, `vram:`, `model:`) as `<select>` switchers synced across tabs.
@@ -83,18 +83,15 @@ Everything for **AI BenchMate** (code, plans, architecture notes, and prompt/res
 
 ## 5. Immediate Next Steps
 
-1. Open `portable/index.html` (or run `npm.cmd run dev` for the React + Vite edition), run `01 · Pre-flight Check` and `02`–`04` on `1. Setup & Pre-flight`, and execute your benchmark runs on `2. Benchmarks`.
-2. When transferring to another PC, either copy-paste `C:\Users\GadgetPilipinas\Documents\AI BenchMate` or `git clone` either GitHub repository.
+1. Pull the latest repo (or copy the updated folder) to your RTX Spark laptop, open `portable/index.html` (or run `npm.cmd run dev`), and run Cards `01` → `02` → `03` → `04` on `1. Setup & Pre-flight` (or click `Copy Setup Playbook` to run all setup steps in one go).
+2. Execute your benchmark runs on `2. Benchmarks` and audit outputs in `3. Results & Audit`.
 
-## Latest Update (2026-11-16) — Zero-Error From-Scratch Setup Cards (`01`–`04`) & Dependency Ordering
+## Latest Update (2026-11-16) — Action-First Setup Card Ordering (`01` → `04`) & Fast `tar.exe` Binary Provisioning
 
-- **Fixed `git : The term 'git' is not recognized` & All Fresh-Machine Setup Dependencies:**
-  - Upgraded `buildSetupCards()` and `buildSuiteClientCommand()` in both `src/core/benchmate-engine.js` and `portable/js/benchmate-engine.js`.
-  - **Card `01` (`setup_verify`):** Added full `$env:Path` refresh (including `;C:\Program Files\Git\cmd;C:\Program Files (x86)\Git\cmd;$env:LOCALAPPDATA\Programs\Git\cmd`) and wrapped `git`, `nvidia-smi`/`amd-smi`, and `py`/`python` in `Get-Command ... -ErrorAction SilentlyContinue` (`command -v` on Linux) so Card 01 never throws `CommandNotFoundException`.
-  - **Card `02` (`setup_llamacpp`):** Automatically installs `Git.Git` via `winget` + refreshes `$env:Path` across all 3 Git install scopes, installs Microsoft VC++ Redistributable (`vcruntime140.dll`), clones `llama.cpp` with an HTTPS `.zip` fallback if `git` is blocked, and automatically downloads + extracts the latest official `ggml-org/llama.cpp` pre-built Windows release binaries (`arm64` CUDA+`cudart`, `x64` CUDA+`cudart`, `vulkan-x64`, or `rocm-x64`) into `${binDir}`.
-  - **Card `03` (`setup_env`):** Checks explicit `$pyPaths` (`Python312`/`Python311` in `$env:LOCALAPPDATA` and `C:\Program Files`), installs `Python.Python.3.12` via `winget`, reloads `$env:Path` + `$foundPy`, invokes `& "$venvPy" -m pip install` directly (including `requests tqdm tabulate huggingface_hub`), and includes an HTTPS `.zip` fallback for `llmperf`.
-  - **Card `04` (`setup_models`):** Uses `.venv-aiperf` `hf_hub_download` if available, with an automatic resumable `curl.exe -L -C -` / `wget -c` fallback if run before Card 03.
+- **Eliminated Passive `[ACTION NEEDED]` / Check-Only First Step:**
+  - Reordered `buildSetupCards()` so installation actions happen FIRST (`01 · Install & Verify Git, VC++ Runtime, llama.cpp Binaries & SPEED-Bench` → `02 · Install & Verify Python 3.12, Venvs & Benchmark Suites` → `03 · Download & Verify Benchmark GGUF Models` → `04 · Complete Pre-Flight Verification & Self-Healing Check`).
+  - Added `[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12`, `$ProgressPreference = 'SilentlyContinue'`, `-Headers @{"User-Agent"="ai-benchmate"}`, and fast `tar.exe -xf` extraction (with `Expand-Archive` fallback) to automatically download and extract `llama-bench.exe`, `llama-server.exe`, `ggml-cuda.dll` (`ggml-vulkan.dll` / `ggml-hip.dll`), and `cudart` DLLs directly into `C:\llama.cpp\cuda`.
 - **Last Verified State:**
   - `node --check` on `portable/js/benchmate-data.js`, `portable/js/benchmate-engine.js`, `portable/js/benchmate-ui.js`: exit 0
-  - `node "C:\Program Files\nodejs\node_modules\npm\bin\npm-cli.js" run build` (`vite build`, 32 modules, 849ms): exit 0
+  - `node "C:\Program Files\nodejs\node_modules\npm\bin\npm-cli.js" run build` (`vite build`, 32 modules, 658ms): exit 0
   - `node scripts\verify-benchmate.mjs`: `ALL AI BENCHMATE VERIFICATION CHECKS PASSED (10/10)`

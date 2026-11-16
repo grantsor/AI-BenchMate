@@ -161,6 +161,13 @@ for (const pid of Object.keys(HARDWARE_PROFILES)) {
   const cardsReact = buildSetupCards(sReact);
   const cardsPort = winCtx.window.BenchmateEngine.buildSetupCards(sPort);
   assert.equal(JSON.stringify(cardsReact), JSON.stringify(cardsPort), `Setup cards mismatch for ${pid}`);
+  assert.equal(cardsReact[0].id, "setup_llamacpp", `Card 01 must be setup_llamacpp on ${pid}`);
+  assert.equal(cardsReact[1].id, "setup_env", `Card 02 must be setup_env on ${pid}`);
+  assert.equal(cardsReact[2].id, "setup_models", `Card 03 must be setup_models on ${pid}`);
+  assert.equal(cardsReact[3].id, "setup_verify", `Card 04 must be setup_verify on ${pid}`);
+  for (const card of cardsReact) {
+    assert.ok(!card.cmd.includes("[ACTION NEEDED]"), `Passive [ACTION NEEDED] found in ${card.id} on ${pid}`);
+  }
 
   const c1 = cardsReact.find((c) => c.id === "setup_verify").cmd;
   const c2 = cardsReact.find((c) => c.id === "setup_llamacpp").cmd;
