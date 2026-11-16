@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from "react";
 import {
   HARDWARE_PROFILES,
+  HELP_TOOLTIPS,
   PARITY_DEFAULTS,
   QUICK_MODELS,
   SUITE_METADATA
@@ -252,6 +253,70 @@ export default function App() {
     }
   }, []);
 
+  useEffect(() => {
+    let tipEl = document.getElementById("sb-floating-tooltip");
+    if (!tipEl) {
+      tipEl = document.createElement("div");
+      tipEl.id = "sb-floating-tooltip";
+      tipEl.className = "sb-floating-tooltip";
+      tipEl.setAttribute("role", "tooltip");
+      document.body.appendChild(tipEl);
+    }
+
+    const escHtml = (str) =>
+      String(str == null ? "" : str)
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;")
+        .replace(/"/g, "&quot;");
+
+    const handleMouseOver = (ev) => {
+      const targetEl = ev.target && ev.target.closest ? ev.target.closest("[data-tip]") : null;
+      if (!targetEl) {
+        tipEl.classList.remove("visible");
+        return;
+      }
+      const key = targetEl.getAttribute("data-tip");
+      const info = key && HELP_TOOLTIPS ? HELP_TOOLTIPS[key] : null;
+      if (!info) {
+        tipEl.classList.remove("visible");
+        return;
+      }
+      tipEl.innerHTML = `
+        <div class="sb-tip-title">${escHtml(info.title)}</div>
+        <div class="sb-tip-desc">${escHtml(info.desc)}</div>
+        ${info.rec ? `<div class="sb-tip-rec">${escHtml(info.rec)}</div>` : ""}
+      `;
+      tipEl.classList.add("visible");
+      if (typeof targetEl.getBoundingClientRect === "function") {
+        const rect = targetEl.getBoundingClientRect();
+        const vw = window.innerWidth || 1200;
+        const vh = window.innerHeight || 800;
+        const tipW = 360;
+        const tipH = tipEl.offsetHeight || 110;
+        const left = Math.max(10, Math.min(rect.left, vw - tipW - 14));
+        let top = rect.bottom + 8;
+        if (top + tipH > vh - 10 && rect.top > tipH + 16) {
+          top = rect.top - tipH - 8;
+        }
+        tipEl.style.left = `${Math.round(left)}px`;
+        tipEl.style.top = `${Math.round(top)}px`;
+      }
+    };
+
+    const handleMouseOut = (ev) => {
+      const related = ev.relatedTarget && ev.relatedTarget.closest ? ev.relatedTarget.closest("[data-tip]") : null;
+      if (!related) tipEl.classList.remove("visible");
+    };
+
+    document.addEventListener("mouseover", handleMouseOver);
+    document.addEventListener("mouseout", handleMouseOut);
+    return () => {
+      document.removeEventListener("mouseover", handleMouseOver);
+      document.removeEventListener("mouseout", handleMouseOut);
+    };
+  }, []);
+
   const copyCommand = (text, key) => {
     const val = String(text || "");
     const markCopied = () => {
@@ -392,7 +457,7 @@ export default function App() {
 
   const renderSuiteFieldInput = (suiteId, field, label, type, val) => (
     <div className="sb-field" key={field}>
-      <label>{label}</label>
+      <label data-tip={`param_${field}`}>{label}</label>
       <input
         type={type}
         className="sb-input"
@@ -404,7 +469,7 @@ export default function App() {
 
   const renderSuiteFieldSelect = (suiteId, field, label, val, options) => (
     <div className="sb-field" key={field}>
-      <label>{label}</label>
+      <label data-tip={`param_${field}`}>{label}</label>
       <select className="sb-select" value={val} onChange={(e) => updateSuiteField(suiteId, field, e.target.value)}>
         {options.map((o) => {
           const v = typeof o === "object" ? o.value : o;
@@ -421,8 +486,8 @@ export default function App() {
 
   const renderSuiteFieldCheck = (suiteId, field, label, checked) => (
     <div className="sb-field" key={field}>
-      <label>{label}</label>
-      <label className="sb-field-inline" style={{ height: "32px" }}>
+      <label data-tip={`chk_${field}`}>{label}</label>
+      <label className="sb-field-inline" style={{ height: "32px" }} data-tip={`chk_${field}`}>
         <input type="checkbox" checked={Boolean(checked)} onChange={(e) => updateSuiteField(suiteId, field, e.target.checked)} />
         <span>{checked ? "Enabled" : "Disabled"}</span>
       </label>
@@ -473,6 +538,7 @@ export default function App() {
             <button
               type="button"
               className={`sb-chip ${isDefault ? "active" : ""}`}
+              data-tip="preset_llmperf_default"
               onClick={() =>
                 updateState((p) => ({
                   ...p,
@@ -488,6 +554,7 @@ export default function App() {
             <button
               type="button"
               className={`sb-chip ${isFast ? "active" : ""}`}
+              data-tip="preset_llmperf_fast"
               onClick={() =>
                 updateState((p) => ({
                   ...p,
@@ -528,6 +595,7 @@ export default function App() {
             <button
               type="button"
               className={`sb-chip ${isDenseVsMoe ? "active" : ""}`}
+              data-tip="cmp_dense_vs_moe"
               onClick={() =>
                 updateState((p) => ({
                   ...p,
@@ -547,6 +615,7 @@ export default function App() {
             <button
               type="button"
               className={`sb-chip ${isStdVs64k ? "active" : ""}`}
+              data-tip="cmp_std_vs_64k"
               onClick={() =>
                 updateState((p) => ({
                   ...p,
@@ -824,7 +893,7 @@ export default function App() {
           <>
             <div className="config-section">
               <div className="sb-inline-row" style={{ justifyContent: "space-between", marginBottom: "10px" }}>
-                <h2 className="sb-section-title" style={{ margin: 0 }}>
+                <h2 className="sb-section-title" style={{ margin: 0 }} data-tip="sec_setup">
                   Pre-flight Verification &amp; Environment Setup — {profile.shortName}
                 </h2>
                 <button
@@ -837,19 +906,23 @@ export default function App() {
               </div>
               <div className="sb-form-grid">
                 <div className="sb-field">
-                  <label>Llama Bin Dir</label>
+                  <label data-tip="hw_binDir">Llama Bin Dir</label>
                   <input type="text" className="sb-input" value={state.hardware.binDir} onChange={(e) => updateState((p) => ({ ...p, hardware: { ...p.hardware, binDir: e.target.value } }))} />
                 </div>
                 <div className="sb-field">
-                  <label>Repo Dir</label>
+                  <label data-tip="hw_repoDir">Repo Dir</label>
                   <input type="text" className="sb-input" value={state.hardware.repoDir} onChange={(e) => updateState((p) => ({ ...p, hardware: { ...p.hardware, repoDir: e.target.value } }))} />
                 </div>
                 <div className="sb-field">
-                  <label>Bench Root (Venvs &amp; llmperf)</label>
+                  <label data-tip="hw_benchRoot">Bench Root (Venvs &amp; llmperf)</label>
                   <input type="text" className="sb-input" value={state.hardware.benchRoot} onChange={(e) => updateState((p) => ({ ...p, hardware: { ...p.hardware, benchRoot: e.target.value } }))} />
                 </div>
                 <div className="sb-field">
-                  <label>Active Model (.gguf)</label>
+                  <label data-tip="hw_resultsDir">Results Dir (Benchmark Outputs)</label>
+                  <input type="text" className="sb-input" value={state.hardware.resultsDir} onChange={(e) => updateState((p) => ({ ...p, hardware: { ...p.hardware, resultsDir: e.target.value } }))} />
+                </div>
+                <div className="sb-field">
+                  <label data-tip="model_fullPath">Active Model (.gguf)</label>
                   <input
                     type="text"
                     className="sb-input"
@@ -878,7 +951,7 @@ export default function App() {
 
               {profile.id === "rtx_spark_win_arm64" && (
                 <div className="sb-inline-row" style={{ marginTop: "10px" }}>
-                  <label className="sb-field-inline">
+                  <label className="sb-field-inline" data-tip="chk_rtxArmTdigestCompile">
                     <input
                       type="checkbox"
                       checked={Boolean(state.hardware.rtxArmTdigestCompile)}
@@ -891,7 +964,7 @@ export default function App() {
 
               {isDgx && (
                 <div className="sb-inline-row" style={{ marginTop: "10px" }}>
-                  <label className="sb-field-inline">
+                  <label className="sb-field-inline" data-tip="chk_nonSudoSetup">
                     <input
                       type="checkbox"
                       checked={Boolean(state.hardware.nonSudoSetup)}
@@ -899,7 +972,7 @@ export default function App() {
                     />
                     <span>Non-sudo setup (skip python3-dev / crick C extension)</span>
                   </label>
-                  <label className="sb-field-inline">
+                  <label className="sb-field-inline" data-tip="chk_includeVllmInStartAi">
                     <input
                       type="checkbox"
                       checked={Boolean(state.ssh.includeVllmInStartAi)}
@@ -915,7 +988,7 @@ export default function App() {
               {setupCards.map((c) => (
                 <div key={c.id} className="sb-terminal-wrap">
                   <div className="sb-terminal-bar">
-                    <span>{c.title}</span>
+                    <span data-tip={c.id}>{c.title}</span>
                     <button
                       type="button"
                       className={`btn btn-sm ${copiedKey === `setup-${c.id}` ? "copied" : ""}`}
@@ -945,7 +1018,7 @@ export default function App() {
                     { field: "hermesServerIp", label: "Hermes Server IP", type: "text" }
                   ].map((f) => (
                     <div key={f.field} className="sb-field">
-                      <label>{f.label}</label>
+                      <label data-tip={`ssh_${f.field}`}>{f.label}</label>
                       <input
                         type={f.type}
                         className="sb-input"
@@ -964,7 +1037,7 @@ export default function App() {
                   {dgxRemoteCards.map((c) => (
                     <div key={c.id} className="sb-terminal-wrap">
                       <div className="sb-terminal-bar">
-                        <span>{c.title}</span>
+                        <span data-tip={`ssh_${c.id}`}>{c.title}</span>
                         <button
                           type="button"
                           className={`btn btn-sm ${copiedKey === `ssh-${c.id}` ? "copied" : ""}`}
@@ -986,8 +1059,8 @@ export default function App() {
           <>
             <div className="config-section">
               <div className="config-bar">
-                <label className="sb-field-inline">
-                  Platform
+                <label className="sb-field-inline" data-tip="hw_profile">
+                  <span>Platform</span>
                   <select className="sb-select" value={state.hardware.profileId} onChange={(e) => handleChangeProfile(e.target.value)}>
                     {Object.values(HARDWARE_PROFILES).map((p) => (
                       <option key={p.id} value={p.id}>
@@ -999,8 +1072,8 @@ export default function App() {
 
                 {profile.id === "amd_win_x64" && (
                   <>
-                    <label className="sb-field-inline">
-                      Backend
+                    <label className="sb-field-inline" data-tip="hw_amdBackend">
+                      <span>Backend</span>
                       <select
                         className="sb-select"
                         value={state.hardware.amdBackend}
@@ -1019,7 +1092,7 @@ export default function App() {
                         <option value="rocm">ROCm HIP</option>
                       </select>
                     </label>
-                    <label className="sb-field-inline">
+                    <label className="sb-field-inline" data-tip="chk_amdEnableFa">
                       <input
                         type="checkbox"
                         checked={Boolean(state.hardware.amdEnableFa)}
@@ -1030,8 +1103,8 @@ export default function App() {
                   </>
                 )}
 
-                <label className="sb-field-inline">
-                  VRAM (GB)
+                <label className="sb-field-inline" data-tip="hw_vramGb">
+                  <span>VRAM (GB)</span>
                   <input
                     type="number"
                     className="sb-input"
@@ -1081,8 +1154,8 @@ export default function App() {
               </div>
 
               <div className="config-model-row">
-                <label className="sb-field-inline" style={{ flex: 1, minWidth: "260px" }}>
-                  Model (.gguf)
+                <label className="sb-field-inline" style={{ flex: 1.3, minWidth: "240px" }} data-tip="model_fullPath">
+                  <span>Model (.gguf)</span>
                   <input
                     type="text"
                     className="sb-input sb-input-wide"
@@ -1132,64 +1205,73 @@ export default function App() {
                 >
                   + Add Model
                 </button>
+                <label className="sb-field-inline" style={{ flex: 1, minWidth: "220px" }} data-tip="hw_resultsDir">
+                  <span>Results Dir</span>
+                  <input
+                    type="text"
+                    className="sb-input sb-input-wide"
+                    value={state.hardware.resultsDir}
+                    onChange={(e) => updateState((p) => ({ ...p, hardware: { ...p.hardware, resultsDir: e.target.value } }))}
+                  />
+                </label>
               </div>
 
               {state.ui.showPathsAndNaming && (
                 <div className="sb-drawer">
                   <div className="sb-form-grid">
                     <div className="sb-field">
-                      <label>Llama Bin Dir</label>
+                      <label data-tip="hw_binDir">Llama Bin Dir</label>
                       <input type="text" className="sb-input" value={state.hardware.binDir} onChange={(e) => updateState((p) => ({ ...p, hardware: { ...p.hardware, binDir: e.target.value } }))} />
                     </div>
                     <div className="sb-field">
-                      <label>Repo Dir</label>
+                      <label data-tip="hw_repoDir">Repo Dir</label>
                       <input type="text" className="sb-input" value={state.hardware.repoDir} onChange={(e) => updateState((p) => ({ ...p, hardware: { ...p.hardware, repoDir: e.target.value } }))} />
                     </div>
                     <div className="sb-field">
-                      <label>Bench Root</label>
+                      <label data-tip="hw_benchRoot">Bench Root</label>
                       <input type="text" className="sb-input" value={state.hardware.benchRoot} onChange={(e) => updateState((p) => ({ ...p, hardware: { ...p.hardware, benchRoot: e.target.value } }))} />
                     </div>
                     <div className="sb-field">
-                      <label>Results Dir</label>
+                      <label data-tip="hw_resultsDir">Results Dir</label>
                       <input type="text" className="sb-input" value={state.hardware.resultsDir} onChange={(e) => updateState((p) => ({ ...p, hardware: { ...p.hardware, resultsDir: e.target.value } }))} />
                     </div>
                     <div className="sb-field">
-                      <label>Model Alias</label>
+                      <label data-tip="model_alias">Model Alias</label>
                       <input type="text" className="sb-input" value={state.model.alias} onChange={(e) => updateState((p) => ({ ...p, model: { ...p.model, alias: e.target.value } }))} />
                     </div>
                     <div className="sb-field">
-                      <label>Output Slug</label>
+                      <label data-tip="model_slug">Output Slug</label>
                       <input type="text" className="sb-input" value={state.model.slug} onChange={(e) => updateState((p) => ({ ...p, model: { ...p.model, slug: e.target.value } }))} />
                     </div>
                     <div className="sb-field">
-                      <label>Tokenizer ID</label>
+                      <label data-tip="model_tokenizer">Tokenizer ID</label>
                       <input type="text" className="sb-input" value={state.model.tokenizer} onChange={(e) => updateState((p) => ({ ...p, model: { ...p.model, tokenizer: e.target.value } }))} />
                     </div>
                     <div className="sb-field">
-                      <label>Weight (GB)</label>
+                      <label data-tip="model_weightGb">Weight (GB)</label>
                       <input type="number" step="0.1" className="sb-input" value={state.model.weightGb} onChange={(e) => updateState((p) => ({ ...p, model: { ...p.model, weightGb: Number(e.target.value) || 0 } }))} />
                     </div>
                     <div className="sb-field">
-                      <label>Params (B)</label>
+                      <label data-tip="model_paramsB">Params (B)</label>
                       <input type="number" step="0.5" className="sb-input" value={state.model.paramsB} onChange={(e) => updateState((p) => ({ ...p, model: { ...p.model, paramsB: Number(e.target.value) || 0 } }))} />
                     </div>
                     <div className="sb-field">
-                      <label>Server Host</label>
+                      <label data-tip="hw_host">Server Host</label>
                       <input type="text" className="sb-input" value={state.hardware.host} onChange={(e) => updateState((p) => ({ ...p, hardware: { ...p.hardware, host: e.target.value } }))} />
                     </div>
                     <div className="sb-field">
-                      <label>Server Port</label>
+                      <label data-tip="hw_port">Server Port</label>
                       <input type="number" className="sb-input" value={state.hardware.port} onChange={(e) => updateState((p) => ({ ...p, hardware: { ...p.hardware, port: Number(e.target.value) || 8080 } }))} />
                     </div>
                     <div className="sb-field">
-                      <label>Client --model Flag</label>
+                      <label data-tip="model_clientModelMode">Client --model Flag</label>
                       <select className="sb-select" value={state.model.clientModelMode} onChange={(e) => updateState((p) => ({ ...p, model: { ...p.model, clientModelMode: e.target.value } }))}>
                         <option value="alias">Alias (--alias)</option>
                         <option value="fullPath">Full GGUF Path</option>
                       </select>
                     </div>
                     <div className="sb-field">
-                      <label>Filename Naming</label>
+                      <label data-tip="naming_mode">Filename Naming</label>
                       <select className="sb-select" value={state.naming.mode} onChange={(e) => updateState((p) => ({ ...p, naming: { ...p.naming, mode: e.target.value } }))}>
                         <option value="auto">Auto (Classic on Default, Stamped on Edit)</option>
                         <option value="stamped">Always Stamped (_c32k_fp16)</option>
@@ -1199,11 +1281,11 @@ export default function App() {
                     {profile.supportsMultiGpu && (
                       <>
                         <div className="sb-field">
-                          <label>Device (-dev)</label>
+                          <label data-tip="hw_nvidiaDevice">Device (-dev)</label>
                           <input type="text" className="sb-input" value={state.hardware.nvidiaDevice || ""} onChange={(e) => updateState((p) => ({ ...p, hardware: { ...p.hardware, nvidiaDevice: e.target.value } }))} />
                         </div>
                         <div className="sb-field">
-                          <label>Tensor Split (-ts)</label>
+                          <label data-tip="hw_tensorSplit">Tensor Split (-ts)</label>
                           <input type="text" className="sb-input" placeholder="e.g. 1,1" value={state.hardware.tensorSplit || ""} onChange={(e) => updateState((p) => ({ ...p, hardware: { ...p.hardware, tensorSplit: e.target.value } }))} />
                         </div>
                       </>
@@ -1347,10 +1429,12 @@ export default function App() {
                 return (
                   <div key={meta.id} className="suite-card">
                     <div className="suite-card-header">
-                      <div className="suite-card-title">
+                      <div className="suite-card-title" data-tip={`suite_${meta.id}`}>
                         <span className="suite-card-num">{meta.index}</span>
                         <span>{meta.title}</span>
-                        <code className="suite-output-tag">-&gt; {target.leaf}</code>
+                        <code className="suite-output-tag" data-tip="hw_resultsDir">
+                          -&gt; {target.leaf}
+                        </code>
                         {modified && <span className="sb-badge sb-badge-warn">Modified</span>}
                       </div>
                       <div className="suite-card-actions">
@@ -1424,17 +1508,18 @@ export default function App() {
             </div>
 
             <div className="playbook-footer">
-              <span className="playbook-footer-title">
+              <span className="playbook-footer-title" data-tip="sec_playbook">
                 Playbook ({profile.shortName} · {state.model.alias || state.model.slug})
               </span>
               <div className="playbook-footer-actions">
-                <button
-                  type="button"
-                  className={`btn btn-sm ${state.ui.playbookMissingOnly ? "btn-primary" : ""}`}
-                  onClick={() => updateState((p) => ({ ...p, ui: { ...p.ui, playbookMissingOnly: !p.ui.playbookMissingOnly } }))}
-                >
-                  {state.ui.playbookMissingOnly ? "Missing / Incomplete Runs Only: ON" : "Missing / Incomplete Runs Only"}
-                </button>
+                <label className="sb-field-inline" data-tip="chk_playbookMissingOnly" style={{ cursor: "pointer" }}>
+                  <input
+                    type="checkbox"
+                    checked={Boolean(state.ui.playbookMissingOnly)}
+                    onChange={(e) => updateState((p) => ({ ...p, ui: { ...p.ui, playbookMissingOnly: e.target.checked } }))}
+                  />
+                  <span>Missing / Incomplete Runs Only</span>
+                </label>
                 <button
                   type="button"
                   className={`btn btn-sm btn-outline ${copiedKey === "playbook" ? "copied" : ""}`}
@@ -1461,16 +1546,12 @@ export default function App() {
           <>
             <div className="config-section">
               <div className="sb-inline-row">
-                <h2 className="sb-section-title" style={{ margin: 0 }}>
+                <h2 className="sb-section-title" style={{ margin: 0 }} data-tip="sec_audit">
                   Results Folder Audit
                 </h2>
-                <label className="btn btn-sm btn-primary" style={{ cursor: "pointer" }}>
+                <label className="btn btn-sm btn-primary" style={{ cursor: "pointer" }} data-tip="hw_resultsDir">
                   Select Folder
                   <input type="file" webkitdirectory="" directory="" multiple style={{ display: "none" }} onChange={(e) => handleFileListAudit(e.target.files)} />
-                </label>
-                <label className="btn btn-sm btn-outline" style={{ cursor: "pointer" }}>
-                  Select Files
-                  <input type="file" multiple accept=".md,.json,.log" style={{ display: "none" }} onChange={(e) => handleFileListAudit(e.target.files)} />
                 </label>
                 <button
                   type="button"
@@ -1491,6 +1572,20 @@ export default function App() {
                 )}
               </div>
 
+              <div className="sb-results-folder-bar">
+                <span data-tip="hw_resultsDir">
+                  <strong>Default Results Folder:</strong>
+                </span>
+                <code>{state.hardware.resultsDir}</code>
+                <button
+                  type="button"
+                  className={`btn btn-sm ${copiedKey === "results-dir" ? "copied" : ""}`}
+                  onClick={() => copyCommand(state.hardware.resultsDir, "results-dir")}
+                >
+                  {copiedKey === "results-dir" ? "Copied" : "Copy Path"}
+                </button>
+              </div>
+
               <div
                 className={`sb-dropzone ${dragOver ? "dragover" : ""}`}
                 onDragOver={(e) => {
@@ -1500,7 +1595,7 @@ export default function App() {
                 onDragLeave={() => setDragOver(false)}
                 onDrop={handleDropAudit}
               >
-                Drop a benchmark results folder or .md / .json / .log files here
+                Drop your benchmark results folder ({state.hardware.resultsDir}) here
               </div>
 
               {state.ui.showDeepAuditScript && (
@@ -1544,12 +1639,12 @@ export default function App() {
                       return (
                         <tr key={meta.id}>
                           <td>
-                            <strong>
+                            <strong data-tip={`suite_${meta.id}`}>
                               {meta.index} · {meta.title}
                             </strong>
                           </td>
                           <td>
-                            <code>{target.leaf}</code>
+                            <code data-tip="hw_resultsDir">{target.leaf}</code>
                           </td>
                           <td>
                             <span className={`sb-badge ${badgeCls}`}>{item ? item.label : "NOT AUDITED"}</span>
@@ -1565,7 +1660,7 @@ export default function App() {
 
             <div>
               <div className="sb-inline-row">
-                <h2 className="sb-section-title" style={{ margin: 0 }}>
+                <h2 className="sb-section-title" style={{ margin: 0 }} data-tip="sec_compare">
                   Parsed Results Comparison
                 </h2>
                 <label className="btn btn-sm btn-outline" style={{ cursor: "pointer" }}>

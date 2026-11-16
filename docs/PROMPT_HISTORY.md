@@ -229,3 +229,30 @@ This file records the chronological conversation prompts, technical decisions, a
   - `node "C:\Program Files\nodejs\node_modules\npm\bin\npm-cli.js" run build` (`vite build`, 32 modules, 821ms): exit 0
   - `node scripts\verify-benchmate.mjs`: `ALL AI BENCHMATE VERIFICATION CHECKS PASSED (9/9)`
   - Extended chat-history verification suite: `ALL 10 CHAT-HISTORY TROUBLESHOOTING & PARITY CHECKS PASSED` (exit 0)
+
+---
+
+### Entry 13 — Interactive Hover Tooltip Popups (Checkboxes, Titles & Parameters) & Default Results Folder Visibility (2026-11-16)
+- **User Prompt Summary:**
+  - Requested hover tooltip popups on all checkboxes explaining what each option does and its default/recommended setting (when to turn it on or off).
+  - Requested hover tooltip popups on card/suite/section titles showing their descriptions.
+  - Asked where the default benchmark results folder (`Results Dir`) is stated in the app, and requested removing the redundant `Select Files` button in `Results & Audit` so only `Select Folder` remains.
+  - Requested hover tooltip popups on all benchmark parameters (e.g. `-ngl`, `-fa`, `Server -c`, `-ctk`, etc.) showing meaning, description, and default/recommended values.
+- **Design & Implementation Changes (Synced 1:1 Across `portable/` and Root React+Vite `src/`):**
+  - **1. Structured `HELP_TOOLTIPS` & Floating Tooltip Popup (`#sb-floating-tooltip`):**
+    - Added 65+ structured tooltip entries (`{ title, desc, rec }`) in `src/core/benchmate-data.js` and `portable/js/benchmate-data.js` covering all 8 checkboxes, all 7 benchmark suite titles, all 11 setup/SSH card titles, section headers, hardware/path/model/SSH fields, preset chips, and all 30+ benchmark suite parameters.
+    - Implemented viewport-aware `#sb-floating-tooltip` on `mouseover`/`mouseout` of `[data-tip]` elements in `portable/js/benchmate-ui.js`, `src/App.jsx`, `portable/css/styles.css`, and `src/styles.css`.
+  - **2. Default Benchmark Results Folder (`Results Dir`) Surfaced Across All 3 Tabs & Single `Select Folder` Button:**
+    - Added `Results Dir (Benchmark Outputs)` to the top path grid in `1. Setup & Pre-flight`.
+    - Added `Results Dir` inline next to `Model (.gguf)` in `2. Benchmarks`.
+    - Added a `Default Results Folder:` bar (`state.hardware.resultsDir` + `Copy Path` button) in `3. Results & Audit` and removed the redundant `Select Files` button from `Results Folder Audit` (leaving only `Select Folder`).
+- **Files Modified:**
+  - `src/core/benchmate-data.js`, `portable/js/benchmate-data.js`
+  - `src/styles.css`, `portable/css/styles.css`
+  - `portable/js/benchmate-ui.js`, `src/App.jsx`
+  - `docs/HANDOFF.md`, `docs/PROMPT_HISTORY.md`
+- **Verification Results:**
+  - `node --check` on `portable/js/benchmate-data.js`, `portable/js/benchmate-engine.js`, `portable/js/benchmate-ui.js`: exit 0
+  - `node "C:\Program Files\nodejs\node_modules\npm\bin\npm-cli.js" run build` (`vite build`, 32 modules, 670ms): exit 0
+  - `node scripts\verify-benchmate.mjs`: `ALL AI BENCHMATE VERIFICATION CHECKS PASSED (9/9)`
+  - Tooltip & Results Dir verification suite: `ALL TOOLTIP POPUPS & RESULTS DIR VISIBILITY CHECKS PASSED` (exit 0)
