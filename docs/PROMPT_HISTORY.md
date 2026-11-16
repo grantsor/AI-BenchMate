@@ -196,3 +196,36 @@ This file records the chronological conversation prompts, technical decisions, a
   - `node "C:\Program Files\nodejs\node_modules\npm\bin\npm-cli.js" run build` (`vite build`, 32 modules, 470ms): exit 0
   - `node scripts\verify-benchmate.mjs`: `ALL AI BENCHMATE VERIFICATION CHECKS PASSED (9/9)`
   - Extended ESM + Node `vm` UI/engine verification (`EXTENDED UI + ENGINE VERIFICATION PASSED (ALL CHECKS OK)`): verified tab order, strict Windows vs DGX Setup filtering, interactive header pills, all 8 guardrails, `Default` terminology, single Copy buttons per terminal bar, `Missing / Incomplete Runs Only` playbook toggle, AMD `-fa 1` toggle, and sample-free `Results & Audit`.
+
+---
+
+### Entry 12 — Chat-History Troubleshooting Fixes & First-Setup Automation Across All 4 Hardware Profiles (2026-11-16)
+- **User Prompt Summary:**
+  - Provided `ai_benchmarks_ai_benchmate_chat_history.md` (alongside `dgx_spark_setup_server_chat_history.md` and earlier reference guides) containing the 1:1 troubleshooting history from benchmarking DGX Spark and Radeon AI Pro R9700 and preparing RTX Spark (Windows ARM64) and NVIDIA GPUs (Windows x64).
+  - Requested analyzing all troubleshooting steps (Python version constraints, venv setups, binary/repo/model preparation, and per-model/per-hardware command flags) in comparison with our app first, and upon approval (`"ok proceed"`), applying all 10 improvements across the app.
+- **Design & Implementation Changes (Synced 1:1 Across `portable/` and Root React+Vite `src/`):**
+  - **1. Python 3.12 Pinning & Windows ARM64 Wheel Compatibility (`setup_env`):**
+    - Windows profiles now verify/install `Python.Python.3.12` via `winget` (using `--architecture x64` on `rtx_spark_win_arm64` so `ray`/`llmperf` and `aiperf` install from pre-built `win_amd64` wheels without C++ compiler failures) and prefer `py -3.12` (fallback `py -3.11`) when creating `.venv-aiperf` and `.venv-agentperf`.
+  - **2. Added `02 · Install / Build llama.cpp & SPEED-Bench Repo` (`setup_llamacpp`) & `04 · Download / Verify Benchmark GGUF Models` (`setup_models`):**
+    - `setup_llamacpp` clones `https://github.com/ggml-org/llama.cpp.git` (ensuring `tools/server/bench/speed-bench/speed_bench.py` exists) and builds CUDA binaries on DGX Spark or verifies binaries on Windows.
+    - `setup_models` uses Python's `huggingface_hub.hf_hub_download` directly inside `.venv-aiperf` to download `Qwen3.8-27B-UD-Q4_K_M.gguf` and `Qwen3.6-35B-A3B-UD-Q4_K_M.gguf` without `hf` CLI PATH errors or `transformers` version conflicts.
+  - **3. Idempotent Venv & `llmperf` Setup (`setup_env`):**
+    - Upgrades `pip setuptools wheel`, guards `git clone llmperf` with directory existence checks, strips `<3.11` from both `pyproject.toml` and `setup.py`, installs `llmperf` and `llama-benchy` before `aiperf`, and adds `pip install "aiperf[tdigest]" || pip install aiperf` fallback on Linux ARM64.
+  - **4. Engine & Parser Fixes (`buildServerCommand`, `buildSuiteClientCommand`, `getClientModelArg`, `getOutputTarget`, `parseResultFile`, `auditFileList`):**
+    - Fixed `getClientModelArg()` case-sensitivity bug (`"fullPath"` vs `"fullpath"`).
+    - Updated `parseResultFile()` and `auditFileList()` to parse `SPEED-Bench` `"results"` when formatted as a JSON `Array` (fixing the `'list' object has no attribute 'keys'` issue from Chat 2).
+    - Updated `getOutputTarget()` in Classic mode to output `speedbench_<slug>_ctx64k.json` when `SPEED-Bench` `-c >= 65536`, and added 1-click comparator preset chips (`Dense vs MoE` and `Standard vs 64K`) in the `04 SPEED-Bench` drawer.
+    - Pre-stopped existing `llama-server` processes in Terminal 1 (`buildServerCommand()`) to prevent port `8080` conflicts when switching suites/models, and added `cd "${benchRoot}/llmperf"` / `Set-Location` to `03 llmperf`.
+    - Hardened DGX Spark `vramSweep` (`sudo systemctl stop ollama`, `lms server stop`) and `setup_hermes_dgx` (safe directory migration before `ln -sfn`, `${SUDO_USER:-$USER}` in systemd override, and sudo-free `~/.local/bin/stop-ai` creation).
+  - **5. Archived Reference Chat Histories:**
+    - Copied `ai_benchmarks_ai_benchmate_chat_history.md` and `dgx_spark_setup_server_chat_history.md` into `docs/references/`.
+- **Files Modified / Added:**
+  - `src/core/benchmate-engine.js`, `portable/js/benchmate-engine.js`
+  - `src/App.jsx`, `portable/js/benchmate-ui.js`
+  - `docs/references/ai_benchmarks_ai_benchmate_chat_history.md`, `docs/references/dgx_spark_setup_server_chat_history.md`
+  - `docs/HANDOFF.md`, `docs/PROMPT_HISTORY.md`
+- **Verification Results:**
+  - `node --check` on `portable/js/benchmate-data.js`, `portable/js/benchmate-engine.js`, `portable/js/benchmate-ui.js`: exit 0
+  - `node "C:\Program Files\nodejs\node_modules\npm\bin\npm-cli.js" run build` (`vite build`, 32 modules, 821ms): exit 0
+  - `node scripts\verify-benchmate.mjs`: `ALL AI BENCHMATE VERIFICATION CHECKS PASSED (9/9)`
+  - Extended chat-history verification suite: `ALL 10 CHAT-HISTORY TROUBLESHOOTING & PARITY CHECKS PASSED` (exit 0)

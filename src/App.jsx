@@ -518,27 +518,73 @@ export default function App() {
     }
     if (suiteId === "speed_bench") {
       const presetVal = ["16384", "32768", "65536"].includes(String(s.c)) ? String(s.c) : "custom";
+      const slug = state.model.slug || "qwen38";
+      const isDenseVsMoe = s.compareBaselineFile === "speedbench_qwen38.json" && s.compareSpeculativeFile === "speedbench_qwen36.json";
+      const isStdVs64k = s.compareBaselineFile === `speedbench_${slug}.json` && s.compareSpeculativeFile === `speedbench_${slug}_ctx64k.json`;
       return (
-        <div className="sb-form-grid">
-          {renderSuiteFieldSelect(suiteId, "contextPreset", "Context Quick Select", presetVal, [
-            { value: "16384", label: "16K (16384)" },
-            { value: "32768", label: "32K (32768)" },
-            { value: "65536", label: "64K (65536)" },
-            { value: "custom", label: "Custom (-c below)" }
-          ])}
-          {renderSuiteFieldInput(suiteId, "c", "Server -c", "number", s.c)}
-          {renderSuiteFieldInput(suiteId, "np", "Server -np", "number", s.np)}
-          {renderSuiteFieldSelect(suiteId, "ctk", "-ctk", s.ctk, kvOpts)}
-          {renderSuiteFieldSelect(suiteId, "ctv", "-ctv", s.ctv, kvOpts)}
-          {renderSuiteFieldSelect(suiteId, "fa", "-fa", s.fa, faOpts)}
-          {renderSuiteFieldCheck(suiteId, "jinja", "--jinja Flag", s.jinja)}
-          {renderSuiteFieldInput(suiteId, "category", "--category", "text", s.category)}
-          {renderSuiteFieldInput(suiteId, "osl", "--osl", "number", s.osl)}
-          {renderSuiteFieldInput(suiteId, "concurrency", "--concurrency", "number", s.concurrency)}
-          {renderSuiteFieldInput(suiteId, "limit", "--limit", "number", s.limit)}
-          {renderSuiteFieldInput(suiteId, "compareBaselineFile", "Compare Baseline JSON", "text", s.compareBaselineFile)}
-          {renderSuiteFieldInput(suiteId, "compareSpeculativeFile", "Compare Speculative JSON", "text", s.compareSpeculativeFile)}
-        </div>
+        <>
+          <div className="sb-inline-row" style={{ marginBottom: "10px" }}>
+            <span style={{ fontSize: "12px", fontWeight: 600, color: "var(--text-secondary)" }}>Comparator Preset:</span>
+            <button
+              type="button"
+              className={`sb-chip ${isDenseVsMoe ? "active" : ""}`}
+              onClick={() =>
+                updateState((p) => ({
+                  ...p,
+                  suites: {
+                    ...p.suites,
+                    speed_bench: {
+                      ...p.suites.speed_bench,
+                      compareBaselineFile: "speedbench_qwen38.json",
+                      compareSpeculativeFile: "speedbench_qwen36.json"
+                    }
+                  }
+                }))
+              }
+            >
+              Dense vs MoE (qwen38 vs qwen36)
+            </button>
+            <button
+              type="button"
+              className={`sb-chip ${isStdVs64k ? "active" : ""}`}
+              onClick={() =>
+                updateState((p) => ({
+                  ...p,
+                  suites: {
+                    ...p.suites,
+                    speed_bench: {
+                      ...p.suites.speed_bench,
+                      compareBaselineFile: `speedbench_${slug}.json`,
+                      compareSpeculativeFile: `speedbench_${slug}_ctx64k.json`
+                    }
+                  }
+                }))
+              }
+            >
+              Standard vs 64K ({slug} vs {slug}_ctx64k)
+            </button>
+          </div>
+          <div className="sb-form-grid">
+            {renderSuiteFieldSelect(suiteId, "contextPreset", "Context Quick Select", presetVal, [
+              { value: "16384", label: "16K (16384)" },
+              { value: "32768", label: "32K (32768)" },
+              { value: "65536", label: "64K (65536)" },
+              { value: "custom", label: "Custom (-c below)" }
+            ])}
+            {renderSuiteFieldInput(suiteId, "c", "Server -c", "number", s.c)}
+            {renderSuiteFieldInput(suiteId, "np", "Server -np", "number", s.np)}
+            {renderSuiteFieldSelect(suiteId, "ctk", "-ctk", s.ctk, kvOpts)}
+            {renderSuiteFieldSelect(suiteId, "ctv", "-ctv", s.ctv, kvOpts)}
+            {renderSuiteFieldSelect(suiteId, "fa", "-fa", s.fa, faOpts)}
+            {renderSuiteFieldCheck(suiteId, "jinja", "--jinja Flag", s.jinja)}
+            {renderSuiteFieldInput(suiteId, "category", "--category", "text", s.category)}
+            {renderSuiteFieldInput(suiteId, "osl", "--osl", "number", s.osl)}
+            {renderSuiteFieldInput(suiteId, "concurrency", "--concurrency", "number", s.concurrency)}
+            {renderSuiteFieldInput(suiteId, "limit", "--limit", "number", s.limit)}
+            {renderSuiteFieldInput(suiteId, "compareBaselineFile", "Compare Baseline JSON", "text", s.compareBaselineFile)}
+            {renderSuiteFieldInput(suiteId, "compareSpeculativeFile", "Compare Speculative JSON", "text", s.compareSpeculativeFile)}
+          </div>
+        </>
       );
     }
     if (suiteId === "agentperf") {
