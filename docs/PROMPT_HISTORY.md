@@ -358,7 +358,25 @@ This file records the chronological conversation prompts, technical decisions, a
 
 ---
 
-## Entry 17 — Windows LM Studio Default Paths (`$env:USERPROFILE\.lmstudio\models`), Recursive `\models\` Folder Scanner & Conditional Card `03` Download (2026-11-16)
+## Entry 17 — Windows ARM64 Python Lookup & `.venv-agentperf` Fallback Fix (2026-11-16, Commit `771002c`)
+
+### User Prompt Summary
+- While running the follow-up one-liner `& "$HOME\benchmarks\.venv-agentperf\Scripts\python.exe" -m pip install ...` on the RTX Spark Windows ARM64 laptop after Card `02`, the user received:
+  `The term 'C:\Users\GadgetPilipinas\benchmarks\.venv-agentperf\Scripts\python.exe' is not recognized as the name of a cmdlet...`
+- Root cause: `.venv-aiperf` had been created, but `.venv-agentperf` had not yet been created because `py -3.12` / non-ARM64 `$pyPaths` failed to match when Python was installed under `Python312-arm64` or only inside the already-created `.venv-aiperf`.
+
+### Key Changes & Files Modified (`src/core/benchmate-engine.js`, `portable/js/benchmate-engine.js`)
+- Expanded `$pyPaths` lookup in Card `02` (`setup_env`) across both Windows x64 and Windows ARM64 templates to check `$env:LOCALAPPDATA\Programs\Python\Python312-arm64\python.exe`, `C:\Program Files\Python312-arm64\python.exe`, and `Python311-arm64` alongside standard `Python312` / `Python311` paths.
+- Added `Remove-Item -Recurse -Force ... -ErrorAction SilentlyContinue` before recreating broken/incomplete `.venv-aiperf` / `.venv-agentperf` folders, changed `py -3.12` to `py -3`, and added `elseif (Test-Path "$venvPy") { & "$venvPy" -m venv ...\.venv-agentperf }` so `.venv-agentperf` can ALWAYS bootstrap directly from the verified `.venv-aiperf` interpreter.
+- Split `.venv-agentperf` package installation into `--upgrade pip setuptools wheel` followed by `agentperf-local`.
+
+### Verification Results
+- Committed & pushed as `771002c` (`AI-BenchMate` `main` and synced to `AI-BenchMate-Portable` `main`).
+
+
+---
+
+## Entry 18 — Windows LM Studio Default Paths (`$env:USERPROFILE\.lmstudio\models`), Recursive `\models\` Folder Scanner & Conditional Card `03` Download (2026-11-16, Commit `125c38c`)
 
 ### User Prompt Summary
 - Requested updating Windows model pathing to match LM Studio's default Windows download location (`C:\Users\<Username>\.lmstudio\models`), kept completely portable across any PC/username (using `$env:USERPROFILE\.lmstudio\models` rather than hardcoding any user folder).
@@ -388,3 +406,25 @@ This file records the chronological conversation prompts, technical decisions, a
 - `node --check portable/js/benchmate-ui.js`: exit 0
 - `node "C:\Program Files\nodejs\node_modules\npm\bin\npm-cli.js" run build`: exit 0 (`32 modules transformed`, built in `713ms`)
 - `node scripts\verify-benchmate.mjs`: `ALL AI BENCHMATE VERIFICATION CHECKS PASSED (11/11)` (exit 0)
+
+
+---
+
+## Entry 19 — Pre-Transfer Completeness Audit & Full Conversation Archival (2026-11-17)
+
+### User Prompt Summary
+- Requested double-checking that the entire conversation, visual references, and workspace files are completely accounted for and documented before transferring to another PC.
+
+### Audit Findings & Additions Made
+1. **Archived Conversation Screenshots Inside Workspace (`docs/references/screenshots/`):**
+   - Copied all 6 uploaded conversation screenshots from the ephemeral Antigravity brain directory into `docs/references/screenshots/` so single-folder transfer and git clones include every visual reference (`media_1794599539057_434acee7.png`, `media_1794599547490_61630a0a.png` for Entry 9; `media_1794601573794_87af4813.png`, `media_1794601683450_2cc9bc8b.png` for Entry 10; `media_1794819895170_24195ab2.png`, `media_1794820016995_e6220a6c.png` for Entry 13).
+2. **Closed History & Doc Gaps:**
+   - Added Entry 17 documenting commit `771002c` (`Python312-arm64` lookup & `.venv-aiperf` fallback when creating `.venv-agentperf`) and renumbered the LM Studio entry cleanly to Entry 18.
+   - Updated `README.md`, `GEMINI.md`, `portable/README.md`, `portable/GEMINI.md`, and `docs/HANDOFF.md` to document exact repo clone URLs, zero `.env` secrets requirement, verification command (`node scripts/verify-benchmate.mjs`), current features across both editions, and clean transfer checklist.
+
+### Verification Results
+- `node --check` on `portable/js/benchmate-data.js`, `portable/js/benchmate-engine.js`, `portable/js/benchmate-ui.js`: exit 0
+- `node "C:\Program Files\nodejs\node_modules\npm\bin\npm-cli.js" run build`: exit 0 (`32 modules transformed`, built in `707ms`)
+- `node scripts\verify-benchmate.mjs`: `ALL AI BENCHMATE VERIFICATION CHECKS PASSED (11/11)` (exit 0)
+
+
